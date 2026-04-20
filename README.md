@@ -1,0 +1,252 @@
+# HUD5 Overlay
+
+一个基于 React + Vite 的赛车 HUD 叠加层工具，用于把车辆遥测、路线轨迹和视频素材同步播放，并导出可用于剪辑软件的透明 HUD 视频。
+
+项目当前的视觉方向参考了 Forza Horizon 风格：速度表、进度/时间、右上角名次、小地图轨迹、玩家名称和海拔等信息都会以固定 16:9 HUD 舞台渲染。
+
+## 功能
+
+- 加载并播放遥测数据：支持 `.csv` 和 `.json`
+- 加载路线数据：支持 `.gpx` 和 `.geojson`
+- 加载视频：支持 `.mp4`、`.mov`、`.webm`、`.m4v`
+- 视频与遥测时间同步
+- 小地图显示路线、方向、已行驶轨迹和比例尺
+- 支持 `km/h` / `MPH` 切换
+- 支持拖拽调整 HUD 组件位置，并保存到 `localStorage`
+- 支持用 Puppeteer + FFmpeg 导出透明 WebM / ProRes 视频
+- 提供 OBD 长格式日志转换脚本
+
+## 技术栈
+
+- React 18
+- TypeScript
+- Vite
+- Zustand
+- Papa Parse
+- `@tmcw/togeojson`
+- Puppeteer
+
+## 快速开始
+
+安装依赖：
+
+```bash
+npm install
+```
+
+启动开发服务器：
+
+```bash
+npm run dev
+```
+
+打开 Vite 输出的本地地址后，可以直接拖入：
+
+- 视频文件
+- `telemetry.csv` / `telemetry.json`
+- `track.gpx` / `track.geojson`
+
+也可以点击界面中的“加载示例数据”使用 `public/samples` 里的示例。
+
+## 常用命令
+
+```bash
+# 开发
+npm run dev
+
+# 类型检查并构建
+npm run build
+
+# 本地预览构建产物
+npm run preview
+
+# 导出 HUD 帧/视频
+npm run export
+```
+
+## 数据格式
+
+### 遥测 CSV
+
+CSV 至少需要包含：
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `t` | 是 | 时间，单位秒 |
+| `speed_kmh` 或 `speed` | 是 | 车速，单位 km/h |
+| `rpm` | 否 | 发动机转速 |
+| `rpm_max` | 否 | 转速表最大值 |
+| `gear` | 否 | 档位，支持数字、`N`、`R` |
+| `throttle` | 否 | 油门，`0` 到 `1` |
+| `brake` | 否 | 刹车，`0` 到 `1` |
+| `abs` | 否 | ABS 状态，支持 `1/0`、`true/false`、`yes/no` |
+| `tcs` | 否 | TCS 状态 |
+| `progress` | 否 | 赛道进度，`0` 到 `1` |
+| `position_current` | 否 | 当前名次 |
+| `position_total` | 否 | 总参赛车辆数 |
+
+示例：
+
+```csv
+t,speed_kmh,rpm,rpm_max,gear,throttle,brake,abs,tcs,progress,position_current,position_total
+0.00,55.00,1883,6000,2,0.30,0,0,0,0.0000,5,12
+0.10,56.20,1940,6000,2,0.35,0,0,0,0.0010,5,12
+```
+
+### 遥测 JSON
+
+可以传入数组，或包含 `samples` 字段的对象。字段支持 camelCase 和 snake_case 混用：
+
+```json
+{
+  "samples": [
+    {
+      "t": 0,
+      "speedKmh": 55,
+      "rpm": 1883,
+      "progress": 0,
+      "positionCurrent": 5,
+      "positionTotal": 12
+    }
+  ]
+}
+```
+
+### 轨迹 GPX / GeoJSON
+
+路线会被投影到本地平面坐标后用于小地图。
+
+GeoJSON 图层可以通过 `properties.kind` 或 `properties.type` 指定：
+
+- `driven`：实际行驶轨迹
+- `planned`：计划路线
+- `reference`：背景参考线
+
+GPX route 会被识别为 `planned`；普通 track 默认作为 `driven`。
+
+## OBD 日志转换
+
+`scripts/convert-obd-log.mjs` 可以把 OBD recorder 的长格式 CSV 转成项目遥测 CSV。
+
+输入格式预期类似：
+
+```csv
+SECONDS;PID;VALUE;UNITS
+0.00;车速;55;km/h
+0.02;发动机转速;1883;rpm
+```
+
+基本用法：
+
+```bash
+node scripts/convert-obd-log.mjs input.csv public/samples/telemetry.csv
+```
+
+固定输出采样率：
+
+```bash
+node scripts/convert-obd-log.mjs input.csv output.csv --rate=10
+```
+
+设置右上角名次：
+
+```bash
+node scripts/convert-obd-log.mjs input.csv output.csv --position-current=3 --position-total=12
+```
+
+未传名次参数时，默认输出 `10 / 12`。
+
+> [!NOTE]
+> 如果 OBD 日志里有总行驶距离字段，脚本会自动归一化生成 `progress`。否则 `progress` 会留空，小地图和进度条会依赖轨迹时间或默认值。
+
+## 导出透明 HUD
+
+导出脚本会用 Puppeteer 驱动浏览器逐帧截图，再用 FFmpeg 合成为视频。
+
+先构建并启动预览服务：
+
+```bash
+npm run build
+npm run preview
+```
+
+再执行导出：
+
+```bash
+node scripts/export-frames.mjs \
+  --telemetry /samples/telemetry.csv \
+  --track /samples/track.gpx \
+  --duration 120 \
+  --fps 60 \
+  --width 1920 \
+  --height 1080 \
+  --out out/hud.webm
+```
+
+输出格式：
+
+- `.webm`：VP9 透明视频
+- `.mov` / `.mp4`：ProRes 4444 透明视频
+- 其他扩展名：保留 PNG 序列到 `out/frames`
+
+> [!IMPORTANT]
+> 导出 `.webm`、`.mov` 或 `.mp4` 需要本机安装 `ffmpeg`，并确保它在 `PATH` 中。
+
+## URL 参数
+
+应用支持通过 URL 参数加载数据，便于导出和自动化：
+
+```text
+/?telemetry=/samples/telemetry.csv&track=/samples/track.gpx&player=ANNA&unit=kmh&t=0
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `telemetry` | 遥测文件 URL |
+| `track` | GPX 或 GeoJSON 文件 URL |
+| `player` | 玩家名称 |
+| `unit` | `kmh` 或 `mph` |
+| `t` | 初始时间，单位秒 |
+| `exporter=1` | 开启透明导出模式，隐藏控制栏 |
+
+## 布局编辑
+
+点击顶部工具栏的“编辑布局”后，可以拖动 HUD 元素。
+
+布局偏移会保存到浏览器 `localStorage`：
+
+```text
+hud5.layout.v4
+```
+
+如果布局错乱，可以点击“重置”恢复默认位置。
+
+## 项目结构
+
+```text
+src/
+  App.tsx                 # 应用外壳、文件加载、视频同步、工具栏和时间轴
+  hud/                    # HUD 组件
+    Hud.tsx
+    Minimap.tsx
+    Speedometer.tsx
+    TopLeftStatus.tsx
+    TopRightPosition.tsx
+    Draggable.tsx
+  data/                   # 遥测和轨迹解析
+  playback/               # 播放状态、布局状态和 rAF 播放循环
+  util/                   # 单位换算和投影工具
+scripts/
+  convert-obd-log.mjs     # OBD 长格式日志转换
+  export-frames.mjs       # 透明 HUD 导出
+  generate-sample.mjs     # 生成示例数据
+public/samples/           # 示例 telemetry 和 track
+design-ref/               # 视觉参考图
+```
+
+## 开发提示
+
+- HUD 舞台固定为 `1920 x 1080`，实际显示时按容器等比缩放。
+- 拖拽布局记录的是 HUD 舞台坐标里的像素偏移，不是浏览器窗口像素。
+- 有视频时，视频元素是时间源；没有视频时，播放循环由 `requestAnimationFrame` 推进。
+- 小地图的黄条会在当前插值位置截断，避免箭头进入青色路线但黄条未跟上的情况。

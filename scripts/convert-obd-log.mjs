@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 // Convert OBD recorder long-format CSV (SECONDS;PID;VALUE;UNITS) to project telemetry CSV.
 // Emits every column the HUD consumes (see src/data/telemetry.ts):
-//   t, speed_kmh, rpm, rpm_max, gear, throttle, brake, abs, tcs, progress
+//   t, speed_kmh, rpm, rpm_max, gear, throttle, brake, abs, tcs, progress,
+//   position_current, position_total
 // Default: emits one row per speed update (native OBD cadence) so sampleAt()
 // can lerp smoothly between samples each frame. Pass --rate=N to force a
 // fixed output rate (useful for exporting).
 // Usage: node scripts/convert-obd-log.mjs <input.csv> [output.csv] [--rate=N]
+//        [--position-current=N] [--position-total=N]
 import fs from 'node:fs';
 import path from 'node:path';
+
+const DEFAULT_POSITION_CURRENT = 10;
+const DEFAULT_POSITION_TOTAL = 12;
 
 const args = process.argv.slice(2);
 const positional = args.filter(a => !a.startsWith('--'));
@@ -20,12 +25,32 @@ const flags = Object.fromEntries(
 
 const input = positional[0];
 if (!input) {
-  console.error('Usage: node scripts/convert-obd-log.mjs <input.csv> [output.csv] [--rate=10]');
+  console.error(
+    'Usage: node scripts/convert-obd-log.mjs <input.csv> [output.csv] [--rate=10] [--position-current=10] [--position-total=12]',
+  );
   process.exit(1);
 }
 const output =
   positional[1] ?? path.join('public', 'samples', 'telemetry.csv');
 const rateHz = flags.rate !== undefined ? Number(flags.rate) : null;
+
+function positiveIntFlag(name, fallback) {
+  const raw = flags[name];
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  if (!Number.isInteger(value) || value < 1) {
+    console.error(`--${name} must be a positive integer.`);
+    process.exit(1);
+  }
+  return value;
+}
+
+const positionCurrent = positiveIntFlag('position-current', DEFAULT_POSITION_CURRENT);
+const positionTotal = positiveIntFlag('position-total', DEFAULT_POSITION_TOTAL);
+if (positionCurrent > positionTotal) {
+  console.error('--position-current cannot be greater than --position-total.');
+  process.exit(1);
+}
 
 // PID → canonical intermediate column. Values are forward-filled.
 // Keys cover both Chinese OBD recorder labels and common English variants.
@@ -181,6 +206,8 @@ for (const absT of sampleTimes) {
     brake,
     abs,
     progress: progress === '' ? '' : progress.toFixed(4),
+    position_current: positionCurrent,
+    position_total: positionTotal,
   });
 }
 
@@ -198,11 +225,26 @@ const headerCols = [
   'abs',
   'tcs',
   'progress',
+  'position_current',
+  'position_total',
 ];
 const out = [headerCols.join(',')];
 for (const r of rows) {
   out.push(
-    [r.t, r.speed_kmh, r.rpm, rpmMax, r.gear, r.throttle, r.brake, r.abs, '', r.progress].join(','),
+    [
+      r.t,
+      r.speed_kmh,
+      r.rpm,
+      rpmMax,
+      r.gear,
+      r.throttle,
+      r.brake,
+      r.abs,
+      '',
+      r.progress,
+      r.position_current,
+      r.position_total,
+    ].join(','),
   );
 }
 
@@ -214,4 +256,5 @@ console.log(
   `Wrote ${rows.length} rows (${duration.toFixed(1)}s @ ${cadence}) → ${output}`,
 );
 console.log(`  observed rpm max: ${rpmMaxObserved}, rpm_max set to ${rpmMax}`);
+console.log(`  grid position: ${positionCurrent}/${positionTotal}`);
 if (distanceMax > 0) console.log(`  distance max: ${distanceMax} km (→ progress)`);

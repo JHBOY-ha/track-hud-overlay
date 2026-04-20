@@ -11,6 +11,7 @@ interface Props {
 
 const DISC = 240;
 const RADIUS = DISC / 2 - 12;
+const ANCHOR_Y = DISC * 0.68;
 
 // Real-world scale: half-width of the visible disc in meters. The disc
 // pixel radius maps to this many meters, so the visible diameter is 2×.
@@ -32,6 +33,49 @@ function pickScaleBarMeters(): number {
   let best = steps[0];
   for (const s of steps) if (s <= targetM) best = s;
   return best;
+}
+
+function splitLayerAtTarget(
+  layer: TrackLayer,
+  currentTime: number,
+  progressFrac: number,
+): { walked: TrackPoint[]; ahead: TrackPoint[] } {
+  const pts = layer.points;
+  if (pts.length < 2) return { walked: pts, ahead: [] };
+
+  const hasTime = pts[0].t !== undefined;
+  const target = hasTime ? currentTime : progressFrac * layer.totalLength;
+  const firstValue = hasTime ? pts[0].t! : pts[0].distance;
+  const lastValue = hasTime ? pts[pts.length - 1].t! : pts[pts.length - 1].distance;
+
+  if (target <= firstValue) return { walked: pts.slice(0, 1), ahead: pts };
+  if (target >= lastValue) return { walked: pts, ahead: pts.slice(-1) };
+
+  let lo = 0;
+  let hi = pts.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    const value = hasTime ? pts[mid].t! : pts[mid].distance;
+    if (value <= target) lo = mid;
+    else hi = mid;
+  }
+
+  const a = pts[lo];
+  const b = pts[lo + 1];
+  const av = hasTime ? a.t! : a.distance;
+  const bv = hasTime ? b.t! : b.distance;
+  const f = (target - av) / ((bv - av) || 1);
+  const current: TrackPoint = {
+    x: a.x + (b.x - a.x) * f,
+    y: a.y + (b.y - a.y) * f,
+    distance: a.distance + (b.distance - a.distance) * f,
+    t: hasTime ? target : undefined,
+  };
+
+  return {
+    walked: [...pts.slice(0, lo + 1), current],
+    ahead: [current, ...pts.slice(lo + 1)],
+  };
 }
 
 export function Minimap({ track, sample, currentTime, playerName }: Props) {
@@ -58,34 +102,9 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const plannedLayer = layers.find(l => l.kind === 'planned');
   const drivenLayer = layers.find(l => l.kind === 'driven') ?? plannedLayer;
 
-  const splitAtProgress = (layer: TrackLayer): { walked: TrackPoint[]; ahead: TrackPoint[] } => {
-    const pts = layer.points;
-    if (pts.length < 2) return { walked: pts, ahead: [] };
-    const hasTime = pts[0].t !== undefined;
-    const target =
-      hasTime && sample
-        ? currentTime
-        : progressFrac * layer.totalLength;
-    let cut = 0;
-    if (hasTime) {
-      for (let i = 0; i < pts.length; i++) {
-        if ((pts[i].t ?? 0) <= target) cut = i;
-        else break;
-      }
-    } else {
-      for (let i = 0; i < pts.length; i++) {
-        if (pts[i].distance <= target) cut = i;
-        else break;
-      }
-    }
-    cut = Math.max(0, Math.min(pts.length - 1, cut));
-    return {
-      walked: pts.slice(0, cut + 1),
-      ahead: pts.slice(cut),
-    };
-  };
-
-  const drivenSplit = drivenLayer ? splitAtProgress(drivenLayer) : null;
+  const drivenSplit = drivenLayer
+    ? splitLayerAtTarget(drivenLayer, currentTime, progressFrac)
+    : null;
 
   const [mx, my] = pose ? toViewCoord(pose.x, pose.y) : [DISC / 2, DISC / 2];
   // headingRad uses atan2(dx, -dy): 0 = north (up), CW. No offset needed.
@@ -93,10 +112,6 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
 
   // Heading-up rotation: rotate map content so the heading points up.
   const mapAngle = -headingDeg;
-
-  // Car anchor — placed below center so the tilted ground plane shows
-  // more of what's ahead than behind.
-  const ANCHOR_Y = DISC * 0.68;
 
   // N label — anchored to true north, sitting on the upper (far) arc.
   const N_RADIUS = DISC / 2 - 22;
@@ -157,8 +172,9 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             width: DISC,
             height: DISC,
             borderRadius: '50%',
+            overflow: 'hidden',
             background:
-              'radial-gradient(circle at 50% 50%, rgba(10,12,14,0.35) 0%, rgba(10,12,14,0.18) 60%, rgba(10,12,14,0) 75%)',
+              'radial-gradient(ellipse at 50% 34%, rgba(120, 210, 210, 0.09) 0%, rgba(120, 210, 210, 0.025) 34%, rgba(120, 210, 210, 0) 60%), radial-gradient(circle at 50% 50%, rgba(10,12,14,0.38) 0%, rgba(10,12,14,0.2) 60%, rgba(10,12,14,0) 75%)',
           }}
         >
           {/* outer ring */}
@@ -181,21 +197,25 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             style={{
               position: 'absolute',
               inset: 0,
-              transform: 'perspective(520px) rotateX(55deg)',
+              transform: 'perspective(760px) rotateX(42deg)',
               transformOrigin: `50% ${(ANCHOR_Y / DISC) * 100}%`,
             }}
           >
             <defs>
-              <radialGradient
+              <linearGradient
                 id="mm-fade"
-                cx="50%"
-                cy={`${(ANCHOR_Y / DISC) * 100}%`}
-                r="50%"
+                gradientUnits="userSpaceOnUse"
+                x1="0"
+                y1="0"
+                x2="0"
+                y2={DISC}
               >
-                <stop offset="0%" stopColor="#fff" stopOpacity="1" />
-                <stop offset="55%" stopColor="#fff" stopOpacity="1" />
-                <stop offset="100%" stopColor="#fff" stopOpacity="0" />
-              </radialGradient>
+                <stop offset="0%" stopColor="#fff" stopOpacity="0.28" />
+                <stop offset="18%" stopColor="#fff" stopOpacity="0.72" />
+                <stop offset="38%" stopColor="#fff" stopOpacity="1" />
+                <stop offset="82%" stopColor="#fff" stopOpacity="1" />
+                <stop offset="100%" stopColor="#fff" stopOpacity="0.58" />
+              </linearGradient>
               <mask id="mm-mask" maskUnits="userSpaceOnUse" x="0" y="0" width={DISC} height={DISC}>
                 <rect width={DISC} height={DISC} fill="url(#mm-fade)" />
               </mask>
@@ -213,7 +233,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(layer.points)}
                       fill="none"
                       stroke="rgba(255,255,255,0.18)"
-                      strokeWidth={5}
+                      strokeWidth={7}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -277,7 +297,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             width={DISC}
             height={DISC}
             style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-          >
+          > 
             {pose && (
               <g transform={`translate(${DISC / 2} ${ANCHOR_Y})`}>
                 <polygon
