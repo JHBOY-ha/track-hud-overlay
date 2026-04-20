@@ -3,6 +3,7 @@ import { Hud } from './hud/Hud';
 import { usePlayback, startPlaybackLoop } from './playback/store';
 import { parseTelemetryCsv, parseTelemetryJson } from './data/telemetry';
 import { parseGpx, parseGeoJson } from './data/track';
+import { enrichGpxWithOsm } from './data/gpxEnrichment';
 import type { SpeedUnit } from './util/units';
 
 async function loadTelemetryFromUrl(url: string) {
@@ -14,12 +15,17 @@ async function loadTelemetryFromUrl(url: string) {
 async function loadTrackFromUrl(url: string) {
   const res = await fetch(url);
   const text = await res.text();
-  return url.match(/\.geojson$/i) ? parseGeoJson(text) : parseGpx(text);
+  return {
+    track: url.match(/\.geojson$/i) ? parseGeoJson(text) : parseGpx(text),
+    gpxSource: url.match(/\.gpx$/i) ? { name: url.split('/').pop() ?? 'track.gpx', text } : null,
+  };
 }
 
 export function App() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gpxSource, setGpxSource] = useState<{ name: string; text: string } | null>(null);
+  const [enrichingTrack, setEnrichingTrack] = useState(false);
   const dropRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
@@ -56,7 +62,11 @@ export function App() {
     (async () => {
       try {
         if (tel) usePlayback.getState().setTelemetry(await loadTelemetryFromUrl(tel));
-        if (trk) usePlayback.getState().setTrack(await loadTrackFromUrl(trk));
+        if (trk) {
+          const loaded = await loadTrackFromUrl(trk);
+          usePlayback.getState().setTrack(loaded.track);
+          setGpxSource(loaded.gpxSource);
+        }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
       } catch (e) {
         setError(String(e));
@@ -127,8 +137,10 @@ export function App() {
           usePlayback.getState().setTelemetry(parseTelemetryJson(text));
         } else if (name.endsWith('.gpx')) {
           usePlayback.getState().setTrack(parseGpx(text));
+          setGpxSource({ name: file.name, text });
         } else if (name.endsWith('.geojson')) {
           usePlayback.getState().setTrack(parseGeoJson(text));
+          setGpxSource(null);
         } else {
           setError(`Unknown file type: ${file.name}`);
         }
@@ -167,9 +179,25 @@ export function App() {
   const loadSamples = async () => {
     try {
       usePlayback.getState().setTelemetry(await loadTelemetryFromUrl('/samples/telemetry.csv'));
-      usePlayback.getState().setTrack(await loadTrackFromUrl('/samples/track.gpx'));
+      const loaded = await loadTrackFromUrl('/samples/track.gpx');
+      usePlayback.getState().setTrack(loaded.track);
+      setGpxSource(loaded.gpxSource);
     } catch (e) {
       setError(String(e));
+    }
+  };
+
+  const enrichCurrentGpx = async () => {
+    if (!gpxSource || enrichingTrack) return;
+    setError(null);
+    setEnrichingTrack(true);
+    try {
+      const { geoJson } = await enrichGpxWithOsm(gpxSource.text);
+      usePlayback.getState().setTrack(parseGeoJson(JSON.stringify(geoJson)));
+    } catch (e) {
+      setError(`GPX 路网补全失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setEnrichingTrack(false);
     }
   };
 
@@ -261,7 +289,12 @@ export function App() {
 
       {!exporterMode && (
         <>
-          <Toolbar unit={unit} />
+          <Toolbar
+            unit={unit}
+            canEnrichTrack={!!gpxSource}
+            enrichingTrack={enrichingTrack}
+            onEnrichTrack={enrichCurrentGpx}
+          />
           <Timeline
             duration={Math.max(telemetry?.duration ?? 0, videoDuration)}
             currentTime={currentTime}
@@ -292,7 +325,17 @@ export function App() {
   );
 }
 
-function Toolbar({ unit }: { unit: SpeedUnit }) {
+function Toolbar({
+  unit,
+  canEnrichTrack,
+  enrichingTrack,
+  onEnrichTrack,
+}: {
+  unit: SpeedUnit;
+  canEnrichTrack: boolean;
+  enrichingTrack: boolean;
+  onEnrichTrack: () => void;
+}) {
   const profile = usePlayback(s => s.profile);
   const editMode = usePlayback(s => s.editMode);
   return (
@@ -364,6 +407,23 @@ function Toolbar({ unit }: { unit: SpeedUnit }) {
         }}
       >
         重置
+      </button>
+      <button
+        onClick={onEnrichTrack}
+        disabled={!canEnrichTrack || enrichingTrack}
+        title={canEnrichTrack ? '从 OpenStreetMap 补全周边路网并刷新小地图' : '先加载 GPX 轨迹'}
+        style={{
+          padding: '4px 10px',
+          background: canEnrichTrack && !enrichingTrack ? '#333' : '#242424',
+          color: canEnrichTrack && !enrichingTrack ? '#fff' : '#777',
+          border: '1px solid #555',
+          borderRadius: 3,
+          cursor: canEnrichTrack && !enrichingTrack ? 'pointer' : 'default',
+          fontFamily: 'inherit',
+          fontSize: 13,
+        }}
+      >
+        {enrichingTrack ? '补全中…' : '补全路网'}
       </button>
       <span style={{ marginLeft: 'auto', color: '#888' }}>
         {editMode ? '拖动 HUD 元素到想要的位置' : '拖入 CSV/JSON/GPX/GeoJSON 文件以加载'}
