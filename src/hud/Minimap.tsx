@@ -13,7 +13,6 @@ import {
   MINIMAP_PLANE_VIEWBOX_HEIGHT,
   MINIMAP_RADIUS as RADIUS,
   MINIMAP_TOP_FADE_OPACITY,
-  MINIMAP_VIEW_RADIUS_M as VIEW_RADIUS_M,
   minimapPlaneTransform,
 } from './minimapViewport';
 
@@ -24,24 +23,23 @@ interface Props {
   playerName: string;
 }
 
-// Real-world scale: half-width of the visible disc in meters. The disc
-// pixel radius maps to this many meters, so the visible diameter is 2×.
-const M_TO_PX = RADIUS / VIEW_RADIUS_M;
 const HEADING_SMOOTHING_TIME_S = 0.35;
 const MAP_ALPHA_MASK =
   'radial-gradient(circle at 50% 50%, #000 0%, #000 38%, rgba(0,0,0,0.74) 56%, rgba(0,0,0,0.28) 74%, transparent 96%)';
+const MAP_CONTENT_INSET = 10;
+const MAP_CONTENT_MASK =
+  'radial-gradient(circle at 50% 50%, #000 0%, #000 50%, rgba(0,0,0,0.72) 70%, rgba(0,0,0,0.3) 80%, transparent 100%)';
 
-// Track coords are now in meters (see util/projection.ts). toViewCoord
-// converts world meters into SVG pixels centered on the disc origin; the
-// outer <g> translates the car to ANCHOR_Y and rotates for heading-up.
-function toViewCoord(x: number, y: number): [number, number] {
-  return [DISC / 2 + x * M_TO_PX, DISC / 2 + y * M_TO_PX];
+// Real-world scale: half-width of the visible disc in meters. The disc
+// pixel radius maps to this many meters, so the visible diameter is 2×.
+// mToPx is computed from the live viewRadiusM setting.
+function toViewCoord(x: number, y: number, mToPx: number): [number, number] {
+  return [DISC / 2 + x * mToPx, DISC / 2 + y * mToPx];
 }
 
-// Pick a "round" scale-bar length that fits comfortably inside the disc.
-function pickScaleBarMeters(): number {
+function pickScaleBarMeters(mToPx: number): number {
   const targetPx = RADIUS * 0.55;
-  const targetM = targetPx / M_TO_PX;
+  const targetM = targetPx / mToPx;
   const steps = [10, 20, 25, 50, 100, 200, 250, 500, 1000];
   let best = steps[0];
   for (const s of steps) if (s <= targetM) best = s;
@@ -93,6 +91,10 @@ function splitLayerAtTarget(
 
 export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const discScale = usePlayback(s => s.layout['minimap.disc'].scale);
+  const viewRadiusM = usePlayback(s => s.settings.minimapViewRadiusM);
+  const tiltDeg = usePlayback(s => s.settings.minimapTiltDeg);
+  const strokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
+  const mToPx = RADIUS / viewRadiusM;
   const disc = DISC * discScale;
   const [displayMapAngle, setDisplayMapAngle] = useState(0);
   const headingRef = useRef<{
@@ -126,7 +128,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const pointsToPath = (pts: TrackPoint[]): string =>
     pts
       .map((p, i) => {
-        const [vx, vy] = toViewCoord(p.x, p.y);
+        const [vx, vy] = toViewCoord(p.x, p.y, mToPx);
         return `${i === 0 ? 'M' : 'L'} ${vx.toFixed(2)} ${vy.toFixed(2)}`;
       })
       .join(' ');
@@ -140,7 +142,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
     ? splitLayerAtTarget(drivenLayer, currentTime, progressFrac)
     : null;
 
-  const [mx, my] = pose ? toViewCoord(pose.x, pose.y) : [DISC / 2, DISC / 2];
+  const [mx, my] = pose ? toViewCoord(pose.x, pose.y, mToPx) : [DISC / 2, DISC / 2];
   // headingRad uses atan2(dx, -dy): 0 = north (up), CW. No offset needed.
   const headingDeg = pose ? (pose.headingRad * 180) / Math.PI : 0;
   const hasPose = !!pose;
@@ -230,10 +232,10 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const trackLenM = routeLayer?.totalLength ?? 0;
   const distLabel = trackLenM > 0 ? `${(trackLenM / 1000).toFixed(2)} KM` : '— KM';
 
-  const scaleBarM = pickScaleBarMeters();
-  const scaleBarPx = scaleBarM * M_TO_PX;
+  const scaleBarM = pickScaleBarMeters(mToPx);
+  const scaleBarPx = scaleBarM * mToPx;
   const scaleBarLabel = scaleBarM >= 1000 ? `${scaleBarM / 1000} KM` : `${scaleBarM} M`;
-  const mapPlaneTransform = minimapPlaneTransform(discScale);
+  const mapPlaneTransform = minimapPlaneTransform(discScale, tiltDeg);
   const mapPlaneLeft = -MINIMAP_PLANE_SIDE_OVERDRAW * discScale;
   const mapPlaneTop = -MINIMAP_PLANE_TOP_OVERDRAW * discScale;
   const mapPlaneWidth = MINIMAP_PLANE_VIEWBOX_WIDTH * discScale;
@@ -246,10 +248,13 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
       ? toViewCoord(
           finishLayer.points[finishLayer.points.length - 1].x,
           finishLayer.points[finishLayer.points.length - 1].y,
+          mToPx,
         )
       : null;
-  const elapsedSec = Math.floor(currentTime);
-  const alt = 412 + Math.round(Math.sin(elapsedSec / 30) * 18);
+  const altLabel =
+    pose?.ele !== undefined && Number.isFinite(pose.ele)
+      ? `${Math.round(pose.ele)}m`
+      : '— m';
 
   return (
     <>
@@ -314,15 +319,26 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             }}
           />
 
-          {/* Map plane — track + fade mask. */}
-          <svg
+          {/* Map content is clipped in screen space to the inner ring. */}
+          <div
+            style={{
+              position: 'absolute',
+              inset: MAP_CONTENT_INSET,
+              borderRadius: '50%',
+              overflow: 'hidden',
+              WebkitMaskImage: MAP_CONTENT_MASK,
+              maskImage: MAP_CONTENT_MASK,
+              pointerEvents: 'none',
+            }}
+          >
+            <svg
             viewBox={`0 0 ${MINIMAP_PLANE_VIEWBOX_WIDTH} ${MINIMAP_PLANE_VIEWBOX_HEIGHT}`}
             width={mapPlaneWidth}
             height={mapPlaneHeight}
             style={{
               position: 'absolute',
-              left: mapPlaneLeft,
-              top: mapPlaneTop,
+              left: mapPlaneLeft - MAP_CONTENT_INSET,
+              top: mapPlaneTop - MAP_CONTENT_INSET,
               transform: mapPlaneTransform,
               transformOrigin: `${mapPlaneAnchorX * discScale}px ${mapPlaneAnchorY * discScale}px`,
             }}
@@ -391,7 +407,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(layer.points)}
                       fill="none"
                       stroke="rgba(255,255,255,0.18)"
-                      strokeWidth={10}
+                      strokeWidth={strokeWidth}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -402,7 +418,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(plannedLayer.points)}
                       fill="none"
                       stroke="var(--teal)"
-                      strokeWidth={10}
+                      strokeWidth={strokeWidth}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={0.45}
@@ -414,7 +430,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(drivenSplit.ahead)}
                       fill="none"
                       stroke="var(--teal)"
-                      strokeWidth={10}
+                      strokeWidth={strokeWidth}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={0.55}
@@ -426,7 +442,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(drivenSplit.walked)}
                       fill="none"
                       stroke="var(--amber)"
-                      strokeWidth={10}
+                      strokeWidth={strokeWidth}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -485,7 +501,8 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                 </g>
               </g>
             )}
-          </svg>
+            </svg>
+          </div>
 
           {/* Overlay — N label and scale bar stay screen-facing. */}
           <svg
@@ -577,7 +594,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             <span style={{ width: 8, height: 8, background: 'var(--amber)' }} />
             {playerName} · P{sample?.positionCurrent ?? '—'}
           </span>
-          <span>ALT · {alt}m</span>
+          <span>ALT · {altLabel}</span>
         </div>
       </Draggable>
     </>

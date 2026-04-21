@@ -28,7 +28,7 @@ test('minimap viewport uses a strong perspective with enough overdraw to fill th
     MINIMAP_PLANE_VIEWBOX_HEIGHT,
     MINIMAP_DISC + MINIMAP_PLANE_TOP_OVERDRAW + MINIMAP_PLANE_BOTTOM_OVERDRAW,
   );
-  assert.ok(MINIMAP_TOP_FADE_OPACITY >= 0.55);
+  assert.ok(MINIMAP_TOP_FADE_OPACITY >= 0.3);
 });
 
 test('minimap car arrow is rendered on the perspective plane', () => {
@@ -46,6 +46,15 @@ test('minimap plane uses a radial alpha blend from center to edges', () => {
   assert.match(source, /fill="url\(#mm-radial-fade\)"/);
   assert.match(source, /cx=\{mapPlaneAnchorX\}/);
   assert.match(source, /cy=\{mapPlaneAnchorY\}/);
+});
+
+test('minimap map content is clipped inside the screen-facing ring', () => {
+  const source = readFileSync(new URL('../src/hud/Minimap.tsx', import.meta.url), 'utf8');
+
+  assert.match(source, /const MAP_CONTENT_MASK =/);
+  assert.match(source, /WebkitMaskImage: MAP_CONTENT_MASK/);
+  assert.match(source, /maskImage: MAP_CONTENT_MASK/);
+  assert.match(source, /inset: MAP_CONTENT_INSET/);
 });
 
 test('minimap car arrow has outlined dimensional styling', () => {

@@ -17,7 +17,10 @@ export const MINIMAP_PLANE_VIEWBOX_HEIGHT =
   MINIMAP_DISC + MINIMAP_PLANE_TOP_OVERDRAW + MINIMAP_PLANE_BOTTOM_OVERDRAW;
 export const MINIMAP_TOP_FADE_OPACITY = 0.4;
 
-export function minimapPlaneTransform(discScale: number): string | undefined {
-  if (MINIMAP_PLANE_TILT_DEG <= 0) return undefined;
-  return `perspective(${760 * discScale}px) rotateX(${MINIMAP_PLANE_TILT_DEG}deg)`;
+export function minimapPlaneTransform(
+  discScale: number,
+  tiltDeg: number = MINIMAP_PLANE_TILT_DEG,
+): string | undefined {
+  if (tiltDeg <= 0) return undefined;
+  return `perspective(${760 * discScale}px) rotateX(${tiltDeg}deg)`;
 }

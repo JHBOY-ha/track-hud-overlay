@@ -27,6 +27,62 @@ const DEFAULT_LAYOUT: Layout = {
 
 const LAYOUT_KEY = 'hud5.layout.v1';
 const PRESETS_KEY = 'hud5.presets.v1';
+const SETTINGS_KEY = 'hud5.settings.v1';
+
+export interface HudSettings {
+  snapToRoads: boolean;
+  snapMaxDistM: number;
+  minimapViewRadiusM: number;
+  minimapTiltDeg: number;
+  minimapStrokeWidth: number;
+}
+
+export const DEFAULT_SETTINGS: HudSettings = {
+  snapToRoads: true,
+  snapMaxDistM: 5,
+  minimapViewRadiusM: 50,
+  minimapTiltDeg: 70,
+  minimapStrokeWidth: 10,
+};
+
+function normalizeSettings(parsed: unknown): HudSettings {
+  const out: HudSettings = { ...DEFAULT_SETTINGS };
+  if (parsed && typeof parsed === 'object') {
+    const rec = parsed as Record<string, unknown>;
+    if (typeof rec.snapToRoads === 'boolean') out.snapToRoads = rec.snapToRoads;
+    if (typeof rec.snapMaxDistM === 'number' && rec.snapMaxDistM >= 0) {
+      out.snapMaxDistM = rec.snapMaxDistM;
+    }
+    if (typeof rec.minimapViewRadiusM === 'number' && rec.minimapViewRadiusM > 0) {
+      out.minimapViewRadiusM = rec.minimapViewRadiusM;
+    }
+    if (typeof rec.minimapTiltDeg === 'number' && rec.minimapTiltDeg >= 0) {
+      out.minimapTiltDeg = rec.minimapTiltDeg;
+    }
+    if (typeof rec.minimapStrokeWidth === 'number' && rec.minimapStrokeWidth > 0) {
+      out.minimapStrokeWidth = rec.minimapStrokeWidth;
+    }
+  }
+  return out;
+}
+
+function loadSettings(): HudSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return { ...DEFAULT_SETTINGS };
+    return normalizeSettings(JSON.parse(raw));
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+function saveSettings(s: HudSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+  } catch {
+    /* ignore */
+  }
+}
 
 function normalizeLayout(parsed: unknown): Layout {
   const out: Layout = { ...DEFAULT_LAYOUT };
@@ -102,6 +158,7 @@ interface PlaybackState {
   editMode: boolean;
   layout: Layout;
   presets: Presets;
+  settings: HudSettings;
   stageScale: number;
   videoUrl: string | null;
   videoAspect: number;
@@ -141,6 +198,8 @@ interface PlaybackState {
   savePreset(name: string): void;
   loadPreset(name: string): void;
   deletePreset(name: string): void;
+  setSetting<K extends keyof HudSettings>(key: K, value: HudSettings[K]): void;
+  resetSettings(): void;
 }
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
@@ -155,6 +214,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   editMode: false,
   layout: loadLayout(),
   presets: loadPresets(),
+  settings: loadSettings(),
   stageScale: 1,
   videoUrl: null,
   videoAspect: 16 / 9,
@@ -241,6 +301,16 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     const { [name]: _, ...rest } = get().presets;
     savePresetsToStorage(rest);
     set({ presets: rest });
+  },
+  setSetting: (key, value) => {
+    const next = { ...get().settings, [key]: value };
+    saveSettings(next);
+    set({ settings: next });
+  },
+  resetSettings: () => {
+    const next = { ...DEFAULT_SETTINGS };
+    saveSettings(next);
+    set({ settings: next });
   },
 }));
 

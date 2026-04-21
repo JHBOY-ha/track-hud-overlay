@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import fs from 'node:fs';
 import path from 'node:path';
 
 export default defineConfig({
@@ -8,6 +9,7 @@ export default defineConfig({
     {
       name: 'hud5-gpx-enrichment-api',
       configureServer(server) {
+        server.middlewares.use('/output', serveOutputFiles(server.config.root));
         server.middlewares.use('/api/enrich-gpx', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -49,10 +51,57 @@ export default defineConfig({
           }
         });
       },
+      configurePreviewServer(server) {
+        server.middlewares.use('/output', serveOutputFiles(server.config.root));
+      },
     },
   ],
   server: { port: 5173 },
 });
+
+function serveOutputFiles(root: string) {
+  const outputDir = path.resolve(root, 'output');
+
+  return (req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, next: () => void) => {
+    try {
+      const url = req.url ?? '';
+      const pathname = decodeURIComponent(url.split('?')[0] ?? '').replace(/^\/+/, '');
+      if (!pathname) return next();
+
+      const filePath = path.resolve(outputDir, pathname);
+      if (!filePath.startsWith(`${outputDir}${path.sep}`)) {
+        res.statusCode = 403;
+        res.end('Forbidden');
+        return;
+      }
+      if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return next();
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', contentTypeFor(filePath));
+      fs.createReadStream(filePath).pipe(res);
+    } catch (error) {
+      res.statusCode = 500;
+      res.end(error instanceof Error ? error.message : String(error));
+    }
+  };
+}
+
+function contentTypeFor(filePath: string): string {
+  switch (path.extname(filePath).toLowerCase()) {
+    case '.csv':
+      return 'text/csv; charset=utf-8';
+    case '.geojson':
+      return 'application/geo+json; charset=utf-8';
+    case '.gpx':
+      return 'application/gpx+xml; charset=utf-8';
+    case '.json':
+      return 'application/json; charset=utf-8';
+    case '.md':
+      return 'text/markdown; charset=utf-8';
+    default:
+      return 'application/octet-stream';
+  }
+}
 
 function readJsonBody(req: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {

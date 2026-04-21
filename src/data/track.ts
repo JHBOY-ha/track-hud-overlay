@@ -2,10 +2,16 @@ import { gpx } from '@tmcw/togeojson';
 import type { Track, TrackLayer, TrackLayerKind, TrackPoint } from './schema';
 import { denoiseGpsPoints } from './gpsDenoise';
 import { projectLonLatLayers, type LonLat } from '../util/projection';
+import { buildSegments, snapPointsToSegments } from '../util/snapToRoads';
 import { clamp } from '../util/units';
+
+export interface TrackParseOptions {
+  snap?: { enabled: boolean; maxDistM: number };
+}
 
 interface RawPoint extends LonLat {
   t?: number;
+  ele?: number;
 }
 
 interface RawLayer {
@@ -41,10 +47,12 @@ function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
     const push = (coords: number[][], base = 0): RawPoint[] =>
       coords.map((c, i) => {
         const ts = times?.[base + i];
+        const elev = c.length > 2 ? Number(c[2]) : NaN;
         return {
           lon: c[0],
           lat: c[1],
           t: ts ? Date.parse(ts) / 1000 : undefined,
+          ele: Number.isFinite(elev) ? elev : undefined,
         };
       });
 
@@ -80,6 +88,7 @@ function buildLayer(
       y: p.y,
       distance: totalLength,
       t: raw.points[i].t,
+      ele: raw.points[i].ele,
     };
   });
 
@@ -99,31 +108,50 @@ function pickPrimary(layers: TrackLayer[]): TrackLayer {
   );
 }
 
-function toTrack(rawLayers: RawLayer[]): Track {
+function toTrack(rawLayers: RawLayer[], opts: TrackParseOptions = {}): Track {
   if (rawLayers.length === 0) {
     return { layers: [], points: [], totalLength: 0 };
   }
   const projectedGroups = projectLonLatLayers(rawLayers.map(l => l.points));
-  const layers = rawLayers.map((raw, i) => buildLayer(raw, projectedGroups[i]));
+
+  let processed = projectedGroups;
+  const snap = opts.snap;
+  if (snap?.enabled && snap.maxDistM > 0) {
+    const refIndices: number[] = [];
+    for (let i = 0; i < rawLayers.length; i++) {
+      if (rawLayers[i].kind === 'reference') refIndices.push(i);
+    }
+    if (refIndices.length > 0) {
+      const segments = buildSegments(refIndices.map(i => projectedGroups[i]));
+      processed = projectedGroups.map((g, i) =>
+        rawLayers[i].kind === 'driven'
+          ? snapPointsToSegments(g, segments, snap.maxDistM)
+          : g,
+      );
+    }
+  }
+
+  const layers = rawLayers.map((raw, i) => buildLayer(raw, processed[i]));
   const primary = pickPrimary(layers);
   return { layers, points: primary.points, totalLength: primary.totalLength };
 }
 
-export function parseGpx(text: string): Track {
+export function parseGpx(text: string, opts?: TrackParseOptions): Track {
   const doc = new DOMParser().parseFromString(text, 'application/xml');
   const geo = gpx(doc);
-  return toTrack(rawLayersFromGeoJson(geo, true));
+  return toTrack(rawLayersFromGeoJson(geo, true), opts);
 }
 
-export function parseGeoJson(text: string): Track {
+export function parseGeoJson(text: string, opts?: TrackParseOptions): Track {
   const geo = JSON.parse(text);
-  return toTrack(rawLayersFromGeoJson(geo));
+  return toTrack(rawLayersFromGeoJson(geo), opts);
 }
 
 export interface TrackPose {
   x: number;
   y: number;
   headingRad: number;
+  ele?: number;
 }
 
 export function poseAt(track: Track, opts: { time?: number; progress?: number }): TrackPose | null {
@@ -154,7 +182,9 @@ export function poseAt(track: Track, opts: { time?: number; progress?: number })
   } else {
     const p = clamp(opts.progress ?? 0, 0, 1);
     const targetDist = p * track.totalLength;
-    if (points.length < 2) return { x: points[0].x, y: points[0].y, headingRad: 0 };
+    if (points.length < 2) {
+      return { x: points[0].x, y: points[0].y, headingRad: 0, ele: points[0].ele };
+    }
     let lo = 0, hi = points.length - 1;
     while (hi - lo > 1) {
       const mid = (lo + hi) >> 1;
@@ -171,5 +201,9 @@ export function poseAt(track: Track, opts: { time?: number; progress?: number })
   const x = a.x + (b.x - a.x) * f;
   const y = a.y + (b.y - a.y) * f;
   const heading = Math.atan2(b.x - a.x, -(b.y - a.y)); // 0 = north, clockwise
-  return { x, y, headingRad: heading };
+  const ele =
+    a.ele !== undefined && b.ele !== undefined
+      ? a.ele + (b.ele - a.ele) * f
+      : (a.ele ?? b.ele);
+  return { x, y, headingRad: heading, ele };
 }

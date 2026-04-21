@@ -26,6 +26,7 @@ export interface TrackPoint {
   y: number;
   distance: number;
   t?: number;
+  ele?: number;
 }
 
 export type TrackLayerKind = 'driven' | 'planned' | 'reference';

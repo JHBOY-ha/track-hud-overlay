@@ -3,7 +3,9 @@ import { Hud } from './hud/Hud';
 import { usePlayback, startPlaybackLoop } from './playback/store';
 import { parseTelemetryCsv, parseTelemetryJson } from './data/telemetry';
 import { parseGpx, parseGeoJson } from './data/track';
+import { DEFAULT_SETTINGS, type HudSettings } from './playback/store';
 import type { SpeedUnit } from './util/units';
+import { exportUrlForDroppedFileName } from './util/exportUrls';
 
 async function loadTelemetryFromUrl(url: string) {
   const res = await fetch(url);
@@ -11,12 +13,27 @@ async function loadTelemetryFromUrl(url: string) {
   return url.endsWith('.json') ? parseTelemetryJson(text) : parseTelemetryCsv(text);
 }
 
+type TrackKind = 'gpx' | 'geojson';
+
+interface TrackSource {
+  kind: TrackKind;
+  text: string;
+}
+
+function parseTrackText(source: TrackSource, snap: { enabled: boolean; maxDistM: number }) {
+  const opts = { snap };
+  return source.kind === 'geojson'
+    ? parseGeoJson(source.text, opts)
+    : parseGpx(source.text, opts);
+}
+
 async function loadTrackFromUrl(url: string) {
   const res = await fetch(url);
   const text = await res.text();
+  const kind: TrackKind = url.match(/\.geojson$/i) ? 'geojson' : 'gpx';
   return {
-    track: url.match(/\.geojson$/i) ? parseGeoJson(text) : parseGpx(text),
-    gpxSource: url.match(/\.gpx$/i) ? { name: url.split('/').pop() ?? 'track.gpx', text } : null,
+    source: { kind, text } as TrackSource,
+    gpxSource: kind === 'gpx' ? { name: url.split('/').pop() ?? 'track.gpx', text } : null,
   };
 }
 
@@ -24,6 +41,7 @@ export function App() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [gpxSource, setGpxSource] = useState<{ name: string; text: string } | null>(null);
+  const [trackSource, setTrackSource] = useState<TrackSource | null>(null);
   const [enrichingTrack, setEnrichingTrack] = useState(false);
   const [telemetryUrl, setTelemetryUrl] = useState<string | null>(null);
   const [trackUrl, setTrackUrl] = useState<string | null>(null);
@@ -45,8 +63,23 @@ export function App() {
   const videoWidth = usePlayback(s => s.videoWidth);
   const videoHeight = usePlayback(s => s.videoHeight);
   const projectDuration = usePlayback(s => s.projectDuration);
+  const snapToRoads = usePlayback(s => s.settings.snapToRoads);
+  const snapMaxDistM = usePlayback(s => s.settings.snapMaxDistM);
 
   useEffect(() => startPlaybackLoop(), []);
+
+  useEffect(() => {
+    if (!trackSource) return;
+    try {
+      const parsed = parseTrackText(trackSource, {
+        enabled: snapToRoads,
+        maxDistM: snapMaxDistM,
+      });
+      usePlayback.getState().setTrack(parsed);
+    } catch (e) {
+      setError(`解析轨迹失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  }, [trackSource, snapToRoads, snapMaxDistM]);
 
   useEffect(() => {
     const stored = loadStoredExport();
@@ -86,8 +119,8 @@ export function App() {
         }
         if (trk) {
           const loaded = await loadTrackFromUrl(trk);
-          usePlayback.getState().setTrack(loaded.track);
           setGpxSource(loaded.gpxSource);
+          setTrackSource(loaded.source);
           setTrackUrl(trk);
         }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
@@ -156,18 +189,18 @@ export function App() {
         const text = await file.text();
         if (name.endsWith('.csv')) {
           usePlayback.getState().setTelemetry(parseTelemetryCsv(text));
-          setTelemetryUrl(`/samples/${file.name}`);
+          setTelemetryUrl('');
         } else if (name.endsWith('.json')) {
           usePlayback.getState().setTelemetry(parseTelemetryJson(text));
-          setTelemetryUrl(`/samples/${file.name}`);
+          setTelemetryUrl('');
         } else if (name.endsWith('.gpx')) {
-          usePlayback.getState().setTrack(parseGpx(text));
           setGpxSource({ name: file.name, text });
-          setTrackUrl(`/samples/${file.name}`);
+          setTrackSource({ kind: 'gpx', text });
+          setTrackUrl(exportUrlForDroppedFileName(file.name, 'track'));
         } else if (name.endsWith('.geojson')) {
-          usePlayback.getState().setTrack(parseGeoJson(text));
           setGpxSource(null);
-          setTrackUrl(`/samples/${file.name}`);
+          setTrackSource({ kind: 'geojson', text });
+          setTrackUrl(exportUrlForDroppedFileName(file.name, 'track'));
         } else {
           setError(`Unknown file type: ${file.name}`);
         }
@@ -210,8 +243,8 @@ export function App() {
       usePlayback.getState().setTelemetry(await loadTelemetryFromUrl('/samples/telemetry.csv'));
       setTelemetryUrl('/samples/telemetry.csv');
       const loaded = await loadTrackFromUrl('/samples/track.gpx');
-      usePlayback.getState().setTrack(loaded.track);
       setGpxSource(loaded.gpxSource);
+      setTrackSource(loaded.source);
       setTrackUrl('/samples/track.gpx');
     } catch (e) {
       setError(String(e));
@@ -239,7 +272,7 @@ export function App() {
       const data = JSON.parse(raw);
       if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
       const geoJson = data.geoJson;
-      usePlayback.getState().setTrack(parseGeoJson(JSON.stringify(geoJson)));
+      setTrackSource({ kind: 'geojson', text: JSON.stringify(geoJson) });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(
@@ -353,6 +386,8 @@ export function App() {
             videoHeight={videoHeight}
             telemetryUrl={telemetryUrl}
             trackUrl={trackUrl}
+            hasTelemetry={!!telemetry}
+            hasTrack={!!track}
           />
           <Timeline
             duration={projectDuration ?? Math.max(telemetry?.duration ?? 0, videoDuration)}
@@ -395,6 +430,8 @@ function Toolbar({
   videoHeight,
   telemetryUrl,
   trackUrl,
+  hasTelemetry,
+  hasTrack,
 }: {
   unit: SpeedUnit;
   canEnrichTrack: boolean;
@@ -406,10 +443,13 @@ function Toolbar({
   videoHeight: number;
   telemetryUrl: string | null;
   trackUrl: string | null;
+  hasTelemetry: boolean;
+  hasTrack: boolean;
 }) {
   const profile = usePlayback(s => s.profile);
   const editMode = usePlayback(s => s.editMode);
   const [exportOpen, setExportOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   return (
     <div
       style={{
@@ -501,6 +541,24 @@ function Toolbar({
       </button>
       <div style={{ position: 'relative' }}>
         <button
+          onClick={() => setAdvancedOpen(v => !v)}
+          style={{
+            padding: '4px 10px',
+            background: advancedOpen ? '#6ccfff' : '#333',
+            color: advancedOpen ? '#001' : '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 13,
+          }}
+        >
+          高级设置
+        </button>
+        {advancedOpen && <AdvancedSettingsPanel onClose={() => setAdvancedOpen(false)} />}
+      </div>
+      <div style={{ position: 'relative' }}>
+        <button
           onClick={() => setExportOpen(v => !v)}
           style={{
             padding: '4px 10px',
@@ -522,8 +580,8 @@ function Toolbar({
             defaultDuration={Math.max(telemetryDuration, videoDuration) || 10}
             defaultWidth={videoWidth > 0 ? videoWidth : 1920}
             defaultHeight={videoHeight > 0 ? videoHeight : 1080}
-            defaultTelemetryUrl={telemetryUrl ?? '/samples/telemetry.csv'}
-            defaultTrackUrl={trackUrl ?? '/samples/track.gpx'}
+            defaultTelemetryUrl={telemetryUrl ?? (hasTelemetry ? '' : '/samples/telemetry.csv')}
+            defaultTrackUrl={trackUrl ?? (hasTrack ? '' : '/samples/track.gpx')}
             onClose={() => setExportOpen(false)}
           />
         )}
@@ -741,6 +799,9 @@ function ExportSettingsPanel({
   }, [defaultTrackUrl]);
   const [outPath, setOutPath] = useState('out/hud.webm');
   const [copied, setCopied] = useState(false);
+  const missingTelemetryExportUrl = telemetryUrl.trim() === '';
+  const missingTrackExportUrl = trackUrl.trim() === '';
+  const missingExportUrl = missingTelemetryExportUrl || missingTrackExportUrl;
 
   const presetValue = useMemo(() => {
     const idx = RESOLUTION_PRESETS.findIndex(p => p.w === width && p.h === height);
@@ -918,7 +979,7 @@ function ExportSettingsPanel({
       </label>
 
       <label style={labelStyle}>
-        telemetry URL
+        telemetry URL (请填写绝对路径)
         <input
           value={telemetryUrl}
           onChange={e => setTelemetryUrl(e.target.value)}
@@ -926,9 +987,18 @@ function ExportSettingsPanel({
         />
       </label>
       <label style={labelStyle}>
-        track URL
+        track URL (请填写绝对路径)
         <input value={trackUrl} onChange={e => setTrackUrl(e.target.value)} style={inputStyle} />
       </label>
+      {missingExportUrl && (
+        <div style={{ fontSize: 11, color: '#d6a84f', lineHeight: 1.4 }}>
+          {[
+            missingTelemetryExportUrl ? 'telemetry URL 为空' : null,
+            missingTrackExportUrl ? 'track URL 为空' : null,
+          ].filter(Boolean).join('，')}
+          ；请填写 preview 可访问的路径，例如 /samples/telemetry.csv 或 /output/track.geojson。
+        </div>
+      )}
       <label style={labelStyle}>
         输出路径
         <input value={outPath} onChange={e => setOutPath(e.target.value)} style={inputStyle} />
@@ -1082,6 +1152,158 @@ function Timeline({
         style={{ width: '100%' }}
         disabled={duration === 0}
       />
+    </div>
+  );
+}
+
+function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
+  const settings = usePlayback(s => s.settings);
+  const setSetting = usePlayback(s => s.setSetting);
+  const resetSettings = usePlayback(s => s.resetSettings);
+
+  const labelStyle: React.CSSProperties = {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    fontSize: 12,
+    color: '#bbb',
+  };
+  const inputStyle: React.CSSProperties = {
+    background: '#111',
+    border: '1px solid #444',
+    color: '#eee',
+    padding: '4px 6px',
+    fontFamily: 'inherit',
+    fontSize: 12,
+    borderRadius: 3,
+  };
+  const sectionTitle: React.CSSProperties = {
+    fontSize: 11,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: '0.15em',
+    marginTop: 4,
+  };
+
+  const numberField = <K extends keyof HudSettings>(
+    key: K,
+    label: string,
+    suffix: string,
+    opts: { min?: number; max?: number; step?: number },
+  ) => (
+    <label style={labelStyle} key={key as string}>
+      {label} ({suffix})
+      <input
+        type="number"
+        min={opts.min}
+        max={opts.max}
+        step={opts.step ?? 1}
+        value={settings[key] as number}
+        onChange={e => {
+          const v = Number(e.target.value);
+          if (Number.isFinite(v)) setSetting(key, v as HudSettings[K]);
+        }}
+        style={inputStyle}
+      />
+    </label>
+  );
+
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        top: 'calc(100% + 6px)',
+        right: 0,
+        width: 360,
+        background: '#1e1e1e',
+        border: '1px solid #333',
+        borderRadius: 4,
+        padding: 12,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 10,
+        zIndex: 50,
+        boxShadow: '0 6px 20px rgba(0,0,0,0.5)',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <strong style={{ fontSize: 13 }}>高级设置</strong>
+        <button
+          onClick={onClose}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            color: '#888',
+            cursor: 'pointer',
+            fontSize: 16,
+          }}
+        >
+          ×
+        </button>
+      </div>
+
+      <div style={sectionTitle}>路径吸附</div>
+      <label
+        style={{
+          ...labelStyle,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          color: '#ddd',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={settings.snapToRoads}
+          onChange={e => setSetting('snapToRoads', e.target.checked)}
+        />
+        吸附到真实路网（需先补全路网）
+      </label>
+      {numberField('snapMaxDistM', '吸附阈值', 'm', { min: 0, max: 100, step: 0.5 })}
+      <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
+        GPS 点在该阈值内会垂直吸附到最近道路上；超过阈值保留原始点，避免误吸到平行道路。
+        默认 5 m 适合车辆 GPS。
+      </div>
+
+      <div style={sectionTitle}>小地图</div>
+      <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ flex: 1 }}>
+          {numberField('minimapViewRadiusM', '可视半径', 'm', {
+            min: 10,
+            max: 500,
+            step: 5,
+          })}
+        </div>
+        <div style={{ flex: 1 }}>
+          {numberField('minimapTiltDeg', '俯视角', '°', { min: 0, max: 80, step: 1 })}
+        </div>
+      </div>
+      {numberField('minimapStrokeWidth', '道路线宽', 'px', { min: 1, max: 30, step: 0.5 })}
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
+        <button
+          onClick={() => {
+            if (confirm('将高级设置恢复默认值？')) resetSettings();
+          }}
+          style={{
+            padding: '4px 12px',
+            background: '#333',
+            color: '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: 'pointer',
+            fontFamily: 'inherit',
+            fontSize: 13,
+          }}
+        >
+          恢复默认
+        </button>
+      </div>
+      <div style={{ fontSize: 11, color: '#666' }}>
+        默认值：阈值 {DEFAULT_SETTINGS.snapMaxDistM} m · 半径{' '}
+        {DEFAULT_SETTINGS.minimapViewRadiusM} m · 俯视 {DEFAULT_SETTINGS.minimapTiltDeg}° · 线宽{' '}
+        {DEFAULT_SETTINGS.minimapStrokeWidth}
+      </div>
     </div>
   );
 }

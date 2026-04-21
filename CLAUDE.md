@@ -27,7 +27,7 @@ node --test --experimental-strip-types scripts/heading-smoothing.test.ts
 ## Architecture
 
 ### Fixed 1920×1080 HUD stage
-All HUD components render onto a fixed `1920 x 1080` stage that is scaled to fit the container (`stageScale` in the playback store). Draggable layout offsets are in stage pixels, not screen pixels. The layout is persisted in `localStorage` under key `hud5.layout.v4`; bumping widget shape means bumping the version key.
+All HUD components render onto a fixed `1920 x 1080` stage that is scaled to fit the container (`stageScale` in the playback store). Draggable layout offsets are in stage pixels, not screen pixels. The layout is persisted in `localStorage` under key `hud5.layout.v1`; advanced HUD settings are persisted under `hud5.settings.v1`. Bump the relevant version key when stored data shape changes.
 
 ### Time source switching
 Playback has two mutually exclusive time sources, toggled in [src/App.tsx](src/App.tsx):
