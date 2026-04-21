@@ -19,6 +19,7 @@ export function TopRightPosition({ sample }: Props) {
   return (
     <Draggable
       id="topRight.position"
+      anchor="tr"
       style={{
         position: 'absolute',
         top: 36,

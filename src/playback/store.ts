@@ -9,24 +9,48 @@ export type WidgetId =
   | 'minimap.name'
   | 'speedo.gauge';
 
-export type Layout = Record<WidgetId, { x: number; y: number }>;
+export interface WidgetState {
+  x: number;
+  y: number;
+  scale: number;
+}
+
+export type Layout = Record<WidgetId, WidgetState>;
 
 const DEFAULT_LAYOUT: Layout = {
-  'topLeft.progress': { x: 0, y: 0 },
-  'topRight.position': { x: 0, y: 0 },
-  'minimap.disc': { x: 0, y: 0 },
-  'minimap.name': { x: 0, y: 0 },
-  'speedo.gauge': { x: 0, y: 0 },
+  'topLeft.progress': { x: 0, y: 0, scale: 1 },
+  'topRight.position': { x: 0, y: 0, scale: 1 },
+  'minimap.disc': { x: 0, y: 0, scale: 1 },
+  'minimap.name': { x: 0, y: 0, scale: 1 },
+  'speedo.gauge': { x: 0, y: 0, scale: 1 },
 };
 
-const LAYOUT_KEY = 'hud5.layout.v4';
+const LAYOUT_KEY = 'hud5.layout.v1';
+const PRESETS_KEY = 'hud5.presets.v1';
+
+function normalizeLayout(parsed: unknown): Layout {
+  const out: Layout = { ...DEFAULT_LAYOUT };
+  if (parsed && typeof parsed === 'object') {
+    for (const id of Object.keys(DEFAULT_LAYOUT) as WidgetId[]) {
+      const v = (parsed as Record<string, unknown>)[id];
+      if (v && typeof v === 'object') {
+        const rec = v as Record<string, unknown>;
+        out[id] = {
+          x: typeof rec.x === 'number' ? rec.x : 0,
+          y: typeof rec.y === 'number' ? rec.y : 0,
+          scale: typeof rec.scale === 'number' && rec.scale > 0 ? rec.scale : 1,
+        };
+      }
+    }
+  }
+  return out;
+}
 
 function loadLayout(): Layout {
   try {
     const raw = localStorage.getItem(LAYOUT_KEY);
     if (!raw) return { ...DEFAULT_LAYOUT };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_LAYOUT, ...parsed };
+    return normalizeLayout(JSON.parse(raw));
   } catch {
     return { ...DEFAULT_LAYOUT };
   }
@@ -35,6 +59,32 @@ function loadLayout(): Layout {
 function saveLayout(l: Layout) {
   try {
     localStorage.setItem(LAYOUT_KEY, JSON.stringify(l));
+  } catch {
+    /* ignore */
+  }
+}
+
+export type Presets = Record<string, Layout>;
+
+function loadPresets(): Presets {
+  try {
+    const raw = localStorage.getItem(PRESETS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: Presets = {};
+    for (const [name, layout] of Object.entries(parsed as Record<string, unknown>)) {
+      out[name] = normalizeLayout(layout);
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function savePresetsToStorage(p: Presets) {
+  try {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(p));
   } catch {
     /* ignore */
   }
@@ -51,6 +101,7 @@ interface PlaybackState {
   exporterMode: boolean;
   editMode: boolean;
   layout: Layout;
+  presets: Presets;
   stageScale: number;
   videoUrl: string | null;
   videoAspect: number;
@@ -85,7 +136,11 @@ interface PlaybackState {
   setStageScale(s: number): void;
   nudgeWidget(id: WidgetId, dx: number, dy: number): void;
   setWidgetOffset(id: WidgetId, x: number, y: number): void;
+  setWidgetScale(id: WidgetId, scale: number): void;
   resetLayout(): void;
+  savePreset(name: string): void;
+  loadPreset(name: string): void;
+  deletePreset(name: string): void;
 }
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
@@ -99,6 +154,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   exporterMode: false,
   editMode: false,
   layout: loadLayout(),
+  presets: loadPresets(),
   stageScale: 1,
   videoUrl: null,
   videoAspect: 16 / 9,
@@ -148,13 +204,43 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     set({ layout: next });
   },
   setWidgetOffset: (id, x, y) => {
-    const next: Layout = { ...get().layout, [id]: { x, y } };
+    const cur = get().layout[id];
+    const next: Layout = { ...get().layout, [id]: { ...cur, x, y } };
+    saveLayout(next);
+    set({ layout: next });
+  },
+  setWidgetScale: (id, scale) => {
+    const cur = get().layout[id];
+    const next: Layout = {
+      ...get().layout,
+      [id]: { ...cur, scale: scale > 0.01 ? scale : 0.01 },
+    };
     saveLayout(next);
     set({ layout: next });
   },
   resetLayout: () => {
     saveLayout({ ...DEFAULT_LAYOUT });
     set({ layout: { ...DEFAULT_LAYOUT } });
+  },
+  savePreset: name => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const snapshot = JSON.parse(JSON.stringify(get().layout)) as Layout;
+    const next: Presets = { ...get().presets, [trimmed]: snapshot };
+    savePresetsToStorage(next);
+    set({ presets: next });
+  },
+  loadPreset: name => {
+    const preset = get().presets[name];
+    if (!preset) return;
+    const next = normalizeLayout(preset);
+    saveLayout(next);
+    set({ layout: next });
+  },
+  deletePreset: name => {
+    const { [name]: _, ...rest } = get().presets;
+    savePresetsToStorage(rest);
+    set({ presets: rest });
   },
 }));
 

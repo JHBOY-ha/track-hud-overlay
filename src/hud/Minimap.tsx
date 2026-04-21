@@ -3,6 +3,7 @@ import type { Track, TrackLayer, TrackPoint, TelemetrySample } from '../data/sch
 import { poseAt } from '../data/track';
 import { shortestAngleDeltaDeg, smoothAngleDeg } from '../util/heading';
 import { Draggable } from './Draggable';
+import { usePlayback } from '../playback/store';
 
 interface Props {
   track: Track | null;
@@ -84,6 +85,8 @@ function splitLayerAtTarget(
 }
 
 export function Minimap({ track, sample, currentTime, playerName }: Props) {
+  const discScale = usePlayback(s => s.layout['minimap.disc'].scale);
+  const disc = DISC * discScale;
   const [displayMapAngle, setDisplayMapAngle] = useState(0);
   const headingRef = useRef<{
     displayedDeg: number;
@@ -238,11 +241,13 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
     <>
       <Draggable
         id="minimap.disc"
+        anchor="bl"
+        manualScale
         style={{
           position: 'absolute',
-          left: 48,
-          bottom: 56,
-          width: DISC,
+          left: 55,
+          bottom: 63,
+          width: disc,
           filter: 'drop-shadow(0 2px 10px rgba(0,0,0,0.6))',
           fontFamily: 'var(--mono)',
         }}
@@ -252,11 +257,11 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            fontSize: 10,
+            fontSize: 10 * discScale,
             letterSpacing: '0.22em',
             color: 'var(--ink-dim)',
             textTransform: 'uppercase',
-            marginBottom: 8,
+            marginBottom: 8 * discScale,
           }}
         >
           <span>ROUTE · TRACK</span>
@@ -265,8 +270,8 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
         <div
           style={{
             position: 'relative',
-            width: DISC,
-            height: DISC,
+            width: disc,
+            height: disc,
             borderRadius: '50%',
             overflow: 'hidden',
           }}
@@ -300,12 +305,12 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
               the near edge locked while the far edge recedes. */}
           <svg
             viewBox={`0 0 ${DISC} ${DISC}`}
-            width={DISC}
-            height={DISC}
+            width={disc}
+            height={disc}
             style={{
               position: 'absolute',
               inset: 0,
-              transform: 'perspective(760px) rotateX(42deg)',
+              transform: `perspective(${760 * discScale}px) rotateX(42deg)`,
               transformOrigin: `50% ${(ANCHOR_Y / DISC) * 100}%`,
               WebkitMaskImage: MAP_ALPHA_MASK,
               maskImage: MAP_ALPHA_MASK,
@@ -404,8 +409,8 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
           {/* Overlay — car arrow + N label, untilted on top of the plane */}
           <svg
             viewBox={`0 0 ${DISC} ${DISC}`}
-            width={DISC}
-            height={DISC}
+            width={disc}
+            height={disc}
             style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
           > 
             {pose && (
@@ -469,10 +474,11 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
 
       <Draggable
         id="minimap.name"
+        anchor="bl"
         style={{
           position: 'absolute',
-          left: 48,
-          bottom: 24,
+          left: 55,
+          bottom: 41,
           width: DISC,
           fontFamily: 'var(--mono)',
           filter: 'drop-shadow(0 2px 10px rgba(0,0,0,0.6))',

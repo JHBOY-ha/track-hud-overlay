@@ -481,6 +481,7 @@ function Toolbar({
       >
         重置
       </button>
+      <PresetControls />
       <button
         onClick={onEnrichTrack}
         disabled={!canEnrichTrack || enrichingTrack}
@@ -530,6 +531,90 @@ function Toolbar({
       <span style={{ marginLeft: 'auto', color: '#888' }}>
         {editMode ? '拖动 HUD 元素到想要的位置' : '拖入 CSV/JSON/GPX/GeoJSON 文件以加载'}
       </span>
+    </div>
+  );
+}
+
+function PresetControls() {
+  const presets = usePlayback(s => s.presets);
+  const [selected, setSelected] = useState('');
+  const names = Object.keys(presets).sort();
+
+  const inputStyle: React.CSSProperties = {
+    background: '#111',
+    border: '1px solid #444',
+    color: '#eee',
+    padding: '3px 6px',
+    fontFamily: 'inherit',
+    fontSize: 13,
+    borderRadius: 3,
+  };
+  const btnStyle: React.CSSProperties = {
+    padding: '4px 10px',
+    background: '#333',
+    color: '#fff',
+    border: '1px solid #555',
+    borderRadius: 3,
+    cursor: 'pointer',
+    fontFamily: 'inherit',
+    fontSize: 13,
+  };
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <select
+        title="布局预设"
+        value={selected}
+        onChange={e => {
+          const v = e.target.value;
+          setSelected(v);
+          if (v === '') usePlayback.getState().resetLayout();
+        }}
+        style={{ ...inputStyle, minWidth: 120 }}
+      >
+        <option value="">默认布局</option>
+        {names.map(n => (
+          <option key={n} value={n}>
+            {n}
+          </option>
+        ))}
+      </select>
+      <button
+        onClick={() => {
+          if (!selected) return;
+          usePlayback.getState().loadPreset(selected);
+        }}
+        disabled={!selected}
+        style={{ ...btnStyle, opacity: selected ? 1 : 0.5 }}
+      >
+        加载
+      </button>
+      <button
+        onClick={() => {
+          const name = prompt('预设名称', selected || '');
+          if (name && name.trim()) {
+            const trimmed = name.trim();
+            if (presets[trimmed] && !confirm(`覆盖已有预设 "${trimmed}"？`)) return;
+            usePlayback.getState().savePreset(trimmed);
+            setSelected(trimmed);
+          }
+        }}
+        style={btnStyle}
+      >
+        保存
+      </button>
+      <button
+        onClick={() => {
+          if (!selected) return;
+          if (!confirm(`删除预设 "${selected}"？`)) return;
+          usePlayback.getState().deletePreset(selected);
+          setSelected('');
+        }}
+        disabled={!selected}
+        style={{ ...btnStyle, opacity: selected ? 1 : 0.5 }}
+      >
+        删除
+      </button>
     </div>
   );
 }

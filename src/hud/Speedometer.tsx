@@ -63,10 +63,11 @@ export function Speedometer({ sample, unit, rpmMax }: Props) {
   return (
     <Draggable
       id="speedo.gauge"
+      anchor="br"
       style={{
         position: 'absolute',
         right: 48,
-        bottom: 48,
+        bottom: 45,
         width: GAUGE,
         height: GAUGE,
         fontFamily: 'var(--mono)',

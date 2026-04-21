@@ -24,6 +24,7 @@ export function TopLeftStatus({ sample, currentTime }: Props) {
   return (
     <Draggable
       id="topLeft.progress"
+      anchor="tl"
       style={{
         position: 'absolute',
         top: 36,
