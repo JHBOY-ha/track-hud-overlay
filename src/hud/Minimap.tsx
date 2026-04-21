@@ -7,6 +7,10 @@ import { usePlayback } from '../playback/store';
 import {
   MINIMAP_ANCHOR_Y as ANCHOR_Y,
   MINIMAP_DISC as DISC,
+  MINIMAP_PLANE_SIDE_OVERDRAW,
+  MINIMAP_PLANE_TOP_OVERDRAW,
+  MINIMAP_PLANE_VIEWBOX_WIDTH,
+  MINIMAP_PLANE_VIEWBOX_HEIGHT,
   MINIMAP_RADIUS as RADIUS,
   MINIMAP_TOP_FADE_OPACITY,
   MINIMAP_VIEW_RADIUS_M as VIEW_RADIUS_M,
@@ -230,6 +234,12 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const scaleBarPx = scaleBarM * M_TO_PX;
   const scaleBarLabel = scaleBarM >= 1000 ? `${scaleBarM / 1000} KM` : `${scaleBarM} M`;
   const mapPlaneTransform = minimapPlaneTransform(discScale);
+  const mapPlaneLeft = -MINIMAP_PLANE_SIDE_OVERDRAW * discScale;
+  const mapPlaneTop = -MINIMAP_PLANE_TOP_OVERDRAW * discScale;
+  const mapPlaneWidth = MINIMAP_PLANE_VIEWBOX_WIDTH * discScale;
+  const mapPlaneHeight = MINIMAP_PLANE_VIEWBOX_HEIGHT * discScale;
+  const mapPlaneAnchorX = DISC / 2 + MINIMAP_PLANE_SIDE_OVERDRAW;
+  const mapPlaneAnchorY = ANCHOR_Y + MINIMAP_PLANE_TOP_OVERDRAW;
   const finishLayer = plannedLayer ?? drivenLayer;
   const finish =
     finishLayer && finishLayer.points.length
@@ -306,42 +316,73 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
 
           {/* Map plane — track + fade mask. */}
           <svg
-            viewBox={`0 0 ${DISC} ${DISC}`}
-            width={disc}
-            height={disc}
+            viewBox={`0 0 ${MINIMAP_PLANE_VIEWBOX_WIDTH} ${MINIMAP_PLANE_VIEWBOX_HEIGHT}`}
+            width={mapPlaneWidth}
+            height={mapPlaneHeight}
             style={{
               position: 'absolute',
-              inset: 0,
+              left: mapPlaneLeft,
+              top: mapPlaneTop,
               transform: mapPlaneTransform,
-              transformOrigin: `50% ${(ANCHOR_Y / DISC) * 100}%`,
-              WebkitMaskImage: MAP_ALPHA_MASK,
-              maskImage: MAP_ALPHA_MASK,
+              transformOrigin: `${mapPlaneAnchorX * discScale}px ${mapPlaneAnchorY * discScale}px`,
             }}
           >
             <defs>
+              <radialGradient
+                id="mm-radial-fade"
+                gradientUnits="userSpaceOnUse"
+                cx={mapPlaneAnchorX}
+                cy={mapPlaneAnchorY}
+                r={Math.max(MINIMAP_PLANE_VIEWBOX_WIDTH, MINIMAP_PLANE_VIEWBOX_HEIGHT) * 0.7}
+              >
+                <stop offset="0%" stopColor="#fff" stopOpacity="1" />
+                <stop offset="48%" stopColor="#fff" stopOpacity="1" />
+                <stop offset="60%" stopColor="#fff" stopOpacity={MINIMAP_TOP_FADE_OPACITY} />
+                <stop offset="100%" stopColor="#fff" stopOpacity="0" />
+              </radialGradient>
+              <mask
+                id="mm-mask"
+                maskUnits="userSpaceOnUse"
+                x="0"
+                y="0"
+                width={MINIMAP_PLANE_VIEWBOX_WIDTH}
+                height={MINIMAP_PLANE_VIEWBOX_HEIGHT}
+              >
+                <rect
+                  width={MINIMAP_PLANE_VIEWBOX_WIDTH}
+                  height={MINIMAP_PLANE_VIEWBOX_HEIGHT}
+                  fill="url(#mm-radial-fade)"
+                />
+              </mask>
               <linearGradient
-                id="mm-fade"
+                id="mm-arrow-fill"
                 gradientUnits="userSpaceOnUse"
                 x1="0"
-                y1="0"
+                y1="-72"
                 x2="0"
-                y2={DISC}
+                y2="38"
               >
-                <stop offset="0%" stopColor="#fff" stopOpacity={MINIMAP_TOP_FADE_OPACITY} />
-                <stop offset="14%" stopColor="#fff" stopOpacity="0.9" />
-                <stop offset="32%" stopColor="#fff" stopOpacity="1" />
-                <stop offset="82%" stopColor="#fff" stopOpacity="1" />
-                <stop offset="100%" stopColor="#fff" stopOpacity="0.76" />
+                <stop offset="0%" stopColor="#ffffff" />
+                <stop offset="52%" stopColor="#f8f7ff" />
+                <stop offset="100%" stopColor="#dcd8ea" />
               </linearGradient>
-              <mask id="mm-mask" maskUnits="userSpaceOnUse" x="0" y="0" width={DISC} height={DISC}>
-                <rect width={DISC} height={DISC} fill="url(#mm-fade)" />
-              </mask>
+              <filter
+                id="mm-arrow-shadow"
+                x="-40"
+                y="-80"
+                width="80"
+                height="126"
+                filterUnits="userSpaceOnUse"
+              >
+                <feDropShadow dx="0" dy="4.8" stdDeviation="2.2" floodColor="#171222" floodOpacity="0.76" />
+                <feDropShadow dx="0" dy="0" stdDeviation="1.4" floodColor="#ffffff" floodOpacity="0.46" />
+              </filter>
             </defs>
 
             {track && (
               <g mask="url(#mm-mask)">
                 <g
-                  transform={`translate(${DISC / 2} ${ANCHOR_Y}) rotate(${mapAngle}) translate(${-mx} ${-my})`}
+                  transform={`translate(${mapPlaneAnchorX} ${mapPlaneAnchorY}) rotate(${mapAngle}) translate(${-mx} ${-my})`}
                 >
                   {/* Reference layers — dim gray, background context */}
                   {referenceLayers.map((layer, i) => (
@@ -350,7 +391,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(layer.points)}
                       fill="none"
                       stroke="rgba(255,255,255,0.18)"
-                      strokeWidth={7}
+                      strokeWidth={10}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -361,7 +402,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(plannedLayer.points)}
                       fill="none"
                       stroke="var(--teal)"
-                      strokeWidth={7}
+                      strokeWidth={10}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={0.45}
@@ -373,7 +414,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(drivenSplit.ahead)}
                       fill="none"
                       stroke="var(--teal)"
-                      strokeWidth={7}
+                      strokeWidth={10}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       opacity={0.55}
@@ -385,7 +426,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                       d={pointsToPath(drivenSplit.walked)}
                       fill="none"
                       stroke="var(--amber)"
-                      strokeWidth={8}
+                      strokeWidth={10}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                     />
@@ -406,25 +447,53 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                 </g>
               </g>
             )}
+
+            {pose && (
+              <g transform={`translate(${mapPlaneAnchorX} ${mapPlaneAnchorY})`}>
+                <g transform="scale(0.7)">
+                  <path
+                    d="M 0 -70 L 15 36 L 0 21 L -15 36 Z"
+                    fill="rgba(22, 17, 32, 0.36)"
+                    transform="translate(0 6)"
+                    opacity="0.78"
+                  />
+                  <path
+                    d="M 0 -70 L 15 36 L 0 21 L -15 36 Z"
+                    fill="url(#mm-arrow-fill)"
+                    stroke="rgba(37, 30, 52, 0.95)"
+                    strokeWidth="4.6"
+                    strokeLinejoin="round"
+                    strokeLinecap="round"
+                    filter="url(#mm-arrow-shadow)"
+                  />
+                  <path
+                    d="M 0 -58 L 8.8 22 L 0 13 L -8.8 22 Z"
+                    fill="rgba(255, 255, 255, 0.44)"
+                    stroke="rgba(255, 255, 255, 0.78)"
+                    strokeWidth="1.45"
+                    strokeLinejoin="round"
+                    pointerEvents="none"
+                  />
+                  <path
+                    d="M -11.6 31.5 L 0 20.7 L 11.6 31.5"
+                    fill="none"
+                    stroke="rgba(62, 52, 86, 0.68)"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    pointerEvents="none"
+                  />
+                </g>
+              </g>
+            )}
           </svg>
 
-          {/* Overlay — car arrow + N label, untilted on top of the plane */}
+          {/* Overlay — N label and scale bar stay screen-facing. */}
           <svg
             viewBox={`0 0 ${DISC} ${DISC}`}
             width={disc}
             height={disc}
             style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
-          > 
-            {pose && (
-              <g transform={`translate(${DISC / 2} ${ANCHOR_Y})`}>
-                <polygon
-                  points="0,-11 8,9 0,3 -8,9"
-                  fill="var(--ink)"
-                  style={{ filter: 'drop-shadow(0 0 6px rgba(255,255,255,0.6))' }}
-                />
-              </g>
-            )}
-
+          >
             <text
               x={nx}
               y={ny}
