@@ -4,6 +4,14 @@ import { poseAt } from '../data/track';
 import { shortestAngleDeltaDeg, smoothAngleDeg } from '../util/heading';
 import { Draggable } from './Draggable';
 import { usePlayback } from '../playback/store';
+import {
+  MINIMAP_ANCHOR_Y as ANCHOR_Y,
+  MINIMAP_DISC as DISC,
+  MINIMAP_RADIUS as RADIUS,
+  MINIMAP_TOP_FADE_OPACITY,
+  MINIMAP_VIEW_RADIUS_M as VIEW_RADIUS_M,
+  minimapPlaneTransform,
+} from './minimapViewport';
 
 interface Props {
   track: Track | null;
@@ -12,13 +20,8 @@ interface Props {
   playerName: string;
 }
 
-const DISC = 240;
-const RADIUS = DISC / 2 - 12;
-const ANCHOR_Y = DISC * 0.68;
-
 // Real-world scale: half-width of the visible disc in meters. The disc
 // pixel radius maps to this many meters, so the visible diameter is 2×.
-const VIEW_RADIUS_M = 200;
 const M_TO_PX = RADIUS / VIEW_RADIUS_M;
 const HEADING_SMOOTHING_TIME_S = 0.35;
 const MAP_ALPHA_MASK =
@@ -226,6 +229,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const scaleBarM = pickScaleBarMeters();
   const scaleBarPx = scaleBarM * M_TO_PX;
   const scaleBarLabel = scaleBarM >= 1000 ? `${scaleBarM / 1000} KM` : `${scaleBarM} M`;
+  const mapPlaneTransform = minimapPlaneTransform(discScale);
   const finishLayer = plannedLayer ?? drivenLayer;
   const finish =
     finishLayer && finishLayer.points.length
@@ -300,9 +304,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             }}
           />
 
-          {/* Tilted ground plane — track + fade mask. CSS 3D perspective
-              gives the map depth; transform-origin at the car anchor keeps
-              the near edge locked while the far edge recedes. */}
+          {/* Map plane — track + fade mask. */}
           <svg
             viewBox={`0 0 ${DISC} ${DISC}`}
             width={disc}
@@ -310,7 +312,7 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
             style={{
               position: 'absolute',
               inset: 0,
-              transform: `perspective(${760 * discScale}px) rotateX(42deg)`,
+              transform: mapPlaneTransform,
               transformOrigin: `50% ${(ANCHOR_Y / DISC) * 100}%`,
               WebkitMaskImage: MAP_ALPHA_MASK,
               maskImage: MAP_ALPHA_MASK,
@@ -325,11 +327,11 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
                 x2="0"
                 y2={DISC}
               >
-                <stop offset="0%" stopColor="#fff" stopOpacity="0.28" />
-                <stop offset="18%" stopColor="#fff" stopOpacity="0.72" />
-                <stop offset="38%" stopColor="#fff" stopOpacity="1" />
+                <stop offset="0%" stopColor="#fff" stopOpacity={MINIMAP_TOP_FADE_OPACITY} />
+                <stop offset="14%" stopColor="#fff" stopOpacity="0.9" />
+                <stop offset="32%" stopColor="#fff" stopOpacity="1" />
                 <stop offset="82%" stopColor="#fff" stopOpacity="1" />
-                <stop offset="100%" stopColor="#fff" stopOpacity="0.58" />
+                <stop offset="100%" stopColor="#fff" stopOpacity="0.76" />
               </linearGradient>
               <mask id="mm-mask" maskUnits="userSpaceOnUse" x="0" y="0" width={DISC} height={DISC}>
                 <rect width={DISC} height={DISC} fill="url(#mm-fade)" />
