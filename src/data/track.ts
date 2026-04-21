@@ -4,9 +4,14 @@ import { denoiseGpsPoints } from './gpsDenoise';
 import { projectLonLatLayers, type LonLat } from '../util/projection';
 import { buildSegments, snapPointsToSegments } from '../util/snapToRoads';
 import { clamp } from '../util/units';
+import {
+  convertLonLatLayersToWgs84,
+  type CoordinateSystem,
+} from '../util/coordinateSystems';
 
 export interface TrackParseOptions {
   snap?: { enabled: boolean; maxDistM: number };
+  coordinateSystem?: CoordinateSystem;
 }
 
 interface RawPoint extends LonLat {
@@ -112,26 +117,34 @@ function toTrack(rawLayers: RawLayer[], opts: TrackParseOptions = {}): Track {
   if (rawLayers.length === 0) {
     return { layers: [], points: [], totalLength: 0 };
   }
-  const projectedGroups = projectLonLatLayers(rawLayers.map(l => l.points));
+  const wgs84Groups = convertLonLatLayersToWgs84(
+    rawLayers.map(l => l.points),
+    opts.coordinateSystem ?? 'wgs84',
+  );
+  const normalizedRawLayers = rawLayers.map((raw, i) => ({
+    ...raw,
+    points: wgs84Groups[i],
+  }));
+  const projectedGroups = projectLonLatLayers(wgs84Groups);
 
   let processed = projectedGroups;
   const snap = opts.snap;
   if (snap?.enabled && snap.maxDistM > 0) {
     const refIndices: number[] = [];
-    for (let i = 0; i < rawLayers.length; i++) {
-      if (rawLayers[i].kind === 'reference') refIndices.push(i);
+    for (let i = 0; i < normalizedRawLayers.length; i++) {
+      if (normalizedRawLayers[i].kind === 'reference') refIndices.push(i);
     }
     if (refIndices.length > 0) {
       const segments = buildSegments(refIndices.map(i => projectedGroups[i]));
       processed = projectedGroups.map((g, i) =>
-        rawLayers[i].kind === 'driven'
+        normalizedRawLayers[i].kind === 'driven'
           ? snapPointsToSegments(g, segments, snap.maxDistM)
           : g,
       );
     }
   }
 
-  const layers = rawLayers.map((raw, i) => buildLayer(raw, processed[i]));
+  const layers = normalizedRawLayers.map((raw, i) => buildLayer(raw, processed[i]));
   const primary = pickPrimary(layers);
   return { layers, points: primary.points, totalLength: primary.totalLength };
 }

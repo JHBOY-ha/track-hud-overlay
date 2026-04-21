@@ -30,10 +30,14 @@ const ROAD_TAGS = [
 
 const OSM_ENRICH_NS = 'https://openai.com/codex/osm-enrichment/1';
 const OSM_TILE_SIZE_DEG = 0.08;
+const COORDINATE_SYSTEMS = new Set(['wgs84', 'gcj02', 'bd09']);
+const GCJ_A = 6378245.0;
+const GCJ_EE = 0.00669342162296594323;
+const BD_X_PI = (Math.PI * 3000.0) / 180.0;
 
 function usage() {
   console.error(
-    'Usage: node scripts/enrich-gpx-with-osm.mjs <input.gpx> [out-dir] [--margin-deg=0.001] [--refresh-osm]',
+    'Usage: node scripts/enrich-gpx-with-osm.mjs <input.gpx> [out-dir] [--margin-deg=0.001] [--coord=wgs84|gcj02|bd09] [--refresh-osm]',
   );
 }
 
@@ -51,6 +55,7 @@ function parseArgs(argv) {
     input: positional[0],
     outDir: positional[1] ?? 'output',
     marginDeg: flags['margin-deg'] === undefined ? 0.001 : Number(flags['margin-deg']),
+    coordinateSystem: normalizeCoordinateSystem(flags.coord),
     refreshOsm: flags['refresh-osm'] === true,
   };
 }
@@ -87,7 +92,79 @@ function firstText(body, localName) {
   return match ? decodeXml(match[1].trim()) : '';
 }
 
-export function parseGpxTrack(gpxText) {
+function normalizeCoordinateSystem(value) {
+  return COORDINATE_SYSTEMS.has(value) ? value : 'wgs84';
+}
+
+function outsideChina(lon, lat) {
+  return lon < 72.004 || lon > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y;
+  ret += 0.2 * Math.sqrt(Math.abs(x));
+  ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+  ret += ((20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin((y / 3.0) * Math.PI)) * 2.0) / 3.0;
+  ret += ((160.0 * Math.sin((y / 12.0) * Math.PI) + 320.0 * Math.sin((y * Math.PI) / 30.0)) * 2.0) / 3.0;
+  return ret;
+}
+
+function transformLon(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y;
+  ret += 0.1 * Math.sqrt(Math.abs(x));
+  ret += ((20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0) / 3.0;
+  ret += ((20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin((x / 3.0) * Math.PI)) * 2.0) / 3.0;
+  ret += ((150.0 * Math.sin((x / 12.0) * Math.PI) + 300.0 * Math.sin((x / 30.0) * Math.PI)) * 2.0) / 3.0;
+  return ret;
+}
+
+function wgs84ToGcj02(point) {
+  if (outsideChina(point.lon, point.lat)) return { ...point };
+
+  let dLat = transformLat(point.lon - 105.0, point.lat - 35.0);
+  let dLon = transformLon(point.lon - 105.0, point.lat - 35.0);
+  const radLat = (point.lat / 180.0) * Math.PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - GCJ_EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / (((GCJ_A * (1 - GCJ_EE)) / (magic * sqrtMagic)) * Math.PI);
+  dLon = (dLon * 180.0) / ((GCJ_A / sqrtMagic) * Math.cos(radLat) * Math.PI);
+  return { lon: point.lon + dLon, lat: point.lat + dLat };
+}
+
+function gcj02ToWgs84(point) {
+  if (outsideChina(point.lon, point.lat)) return { ...point };
+
+  let guess = { ...point };
+  for (let i = 0; i < 2; i++) {
+    const shifted = wgs84ToGcj02(guess);
+    guess = {
+      lon: guess.lon - (shifted.lon - point.lon),
+      lat: guess.lat - (shifted.lat - point.lat),
+    };
+  }
+  return guess;
+}
+
+function bd09ToGcj02(point) {
+  const x = point.lon - 0.0065;
+  const y = point.lat - 0.006;
+  const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * BD_X_PI);
+  const theta = Math.atan2(y, x) - 0.000003 * Math.cos(x * BD_X_PI);
+  return {
+    lon: z * Math.cos(theta),
+    lat: z * Math.sin(theta),
+  };
+}
+
+function convertLonLatToWgs84(point, source = 'wgs84') {
+  if (source === 'gcj02') return gcj02ToWgs84(point);
+  if (source === 'bd09') return gcj02ToWgs84(bd09ToGcj02(point));
+  return { ...point };
+}
+
+export function parseGpxTrack(gpxText, coordinateSystem = 'wgs84') {
+  const source = normalizeCoordinateSystem(coordinateSystem);
   const points = [];
   let idx = 0;
   for (const match of gpxText.matchAll(/<trkpt\b([^>]*)>([\s\S]*?)<\/trkpt>/g)) {
@@ -95,10 +172,11 @@ export function parseGpxTrack(gpxText) {
     const lat = Number(attrs.lat);
     const lon = Number(attrs.lon);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const wgs84 = convertLonLatToWgs84({ lon, lat }, source);
     points.push({
       idx,
-      lat,
-      lon,
+      lat: wgs84.lat,
+      lon: wgs84.lon,
       ele: firstText(match[2], 'ele'),
       time: firstText(match[2], 'time'),
       hr: firstText(match[2], 'hr'),
@@ -442,13 +520,19 @@ function outputStem(inputName) {
 
 export async function enrichGpxText(
   originalGpx,
-  { inputName = 'track.gpx', outDir = 'output', marginDeg = 0.001, refreshOsm = false } = {},
+  {
+    inputName = 'track.gpx',
+    outDir = 'output',
+    marginDeg = 0.001,
+    refreshOsm = false,
+    coordinateSystem = 'wgs84',
+  } = {},
 ) {
   const resolvedOutDir = path.resolve(outDir);
   const stem = outputStem(inputName);
   fs.mkdirSync(resolvedOutDir, { recursive: true });
 
-  const points = parseGpxTrack(originalGpx);
+  const points = parseGpxTrack(originalGpx, coordinateSystem);
   const bbox = bboxForPoints(points, marginDeg);
   const osmCache = path.join(resolvedOutDir, `${stem}_osm_bbox.osm`);
   const { xml: osmXml, sourceUrl, downloaded } = await loadOsmXml(bbox, osmCache, refreshOsm);
@@ -496,6 +580,7 @@ export async function run(argv = process.argv.slice(2)) {
     inputName: path.basename(input),
     outDir,
     marginDeg: args.marginDeg,
+    coordinateSystem: args.coordinateSystem,
     refreshOsm: args.refreshOsm,
   });
 

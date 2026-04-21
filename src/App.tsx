@@ -6,6 +6,10 @@ import { parseGpx, parseGeoJson } from './data/track';
 import { DEFAULT_SETTINGS, type HudSettings } from './playback/store';
 import type { SpeedUnit } from './util/units';
 import { exportUrlForDroppedFileName } from './util/exportUrls';
+import {
+  isCoordinateSystem,
+  type CoordinateSystem,
+} from './util/coordinateSystems';
 
 async function loadTelemetryFromUrl(url: string) {
   const res = await fetch(url);
@@ -15,13 +19,27 @@ async function loadTelemetryFromUrl(url: string) {
 
 type TrackKind = 'gpx' | 'geojson';
 
+const COORDINATE_SYSTEM_LABELS: Record<CoordinateSystem, string> = {
+  wgs84: 'WGS-84',
+  gcj02: 'GCJ-02',
+  bd09: 'BD-09',
+};
+
 interface TrackSource {
   kind: TrackKind;
   text: string;
+  normalizedWgs84?: boolean;
 }
 
-function parseTrackText(source: TrackSource, snap: { enabled: boolean; maxDistM: number }) {
-  const opts = { snap };
+function parseTrackText(
+  source: TrackSource,
+  snap: { enabled: boolean; maxDistM: number },
+  coordinateSystem: CoordinateSystem,
+) {
+  const opts = {
+    snap,
+    coordinateSystem: source.normalizedWgs84 ? 'wgs84' : coordinateSystem,
+  };
   return source.kind === 'geojson'
     ? parseGeoJson(source.text, opts)
     : parseGpx(source.text, opts);
@@ -63,6 +81,7 @@ export function App() {
   const videoWidth = usePlayback(s => s.videoWidth);
   const videoHeight = usePlayback(s => s.videoHeight);
   const projectDuration = usePlayback(s => s.projectDuration);
+  const trackCoordinateSystem = usePlayback(s => s.settings.trackCoordinateSystem);
   const snapToRoads = usePlayback(s => s.settings.snapToRoads);
   const snapMaxDistM = usePlayback(s => s.settings.snapMaxDistM);
 
@@ -71,15 +90,19 @@ export function App() {
   useEffect(() => {
     if (!trackSource) return;
     try {
-      const parsed = parseTrackText(trackSource, {
-        enabled: snapToRoads,
-        maxDistM: snapMaxDistM,
-      });
+      const parsed = parseTrackText(
+        trackSource,
+        {
+          enabled: snapToRoads,
+          maxDistM: snapMaxDistM,
+        },
+        trackCoordinateSystem,
+      );
       usePlayback.getState().setTrack(parsed);
     } catch (e) {
       setError(`解析轨迹失败：${e instanceof Error ? e.message : String(e)}`);
     }
-  }, [trackSource, snapToRoads, snapMaxDistM]);
+  }, [trackSource, snapToRoads, snapMaxDistM, trackCoordinateSystem]);
 
   useEffect(() => {
     const stored = loadStoredExport();
@@ -101,11 +124,15 @@ export function App() {
     const trk = q.get('track');
     const player = q.get('player');
     const u = q.get('unit');
+    const coord = q.get('coord');
     const exporter = q.get('exporter') === '1';
     const t0 = Number(q.get('t') ?? '0');
 
     if (player) usePlayback.getState().setProfile({ name: player });
     if (u === 'mph' || u === 'kmh') usePlayback.getState().setUnit(u);
+    if (isCoordinateSystem(coord)) {
+      usePlayback.getState().setSetting('trackCoordinateSystem', coord);
+    }
     if (exporter) {
       usePlayback.getState().setExporterMode(true);
       document.body.classList.add('exporter');
@@ -262,6 +289,7 @@ export function App() {
         body: JSON.stringify({
           inputName: gpxSource.name,
           gpxText: gpxSource.text,
+          coordinateSystem: trackCoordinateSystem,
         }),
       });
       const contentType = res.headers.get('content-type') ?? '';
@@ -272,7 +300,7 @@ export function App() {
       const data = JSON.parse(raw);
       if (!res.ok) throw new Error(data.error ?? `${res.status} ${res.statusText}`);
       const geoJson = data.geoJson;
-      setTrackSource({ kind: 'geojson', text: JSON.stringify(geoJson) });
+      setTrackSource({ kind: 'geojson', text: JSON.stringify(geoJson), normalizedWgs84: true });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(
@@ -790,6 +818,7 @@ function ExportSettingsPanel({
   const [format, setFormat] = useState<ExportFormat>('webm');
   const [telemetryUrl, setTelemetryUrl] = useState(defaultTelemetryUrl);
   const [trackUrl, setTrackUrl] = useState(defaultTrackUrl);
+  const trackCoordinateSystem = usePlayback(s => s.settings.trackCoordinateSystem);
 
   useEffect(() => {
     setTelemetryUrl(defaultTelemetryUrl);
@@ -820,10 +849,22 @@ function ExportSettingsPanel({
       '--height', String(height),
       '--unit', unit,
       '--player', player,
+      '--coord', trackCoordinateSystem,
       '--out', outPath,
     ];
     return args.map(shellQuote).join(' ');
-  }, [telemetryUrl, trackUrl, duration, fps, width, height, unit, player, outPath]);
+  }, [
+    telemetryUrl,
+    trackUrl,
+    duration,
+    fps,
+    width,
+    height,
+    unit,
+    player,
+    trackCoordinateSystem,
+    outPath,
+  ]);
 
   const applyFormat = (f: ExportFormat) => {
     setFormat(f);
@@ -1242,6 +1283,29 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
 
+      <div style={sectionTitle}>轨迹坐标系</div>
+      <label style={labelStyle}>
+        原始坐标系
+        <select
+          value={settings.trackCoordinateSystem}
+          onChange={e => {
+            const value = e.target.value;
+            if (isCoordinateSystem(value)) setSetting('trackCoordinateSystem', value);
+          }}
+          style={inputStyle}
+        >
+          {Object.entries(COORDINATE_SYSTEM_LABELS).map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
+        标准 GPX / GeoJSON / OSM 数据使用 WGS-84；国内地图导出的 GCJ-02 或 BD-09
+        会在投影和路网补全前转换为 WGS-84。
+      </div>
+
       <div style={sectionTitle}>路径吸附</div>
       <label
         style={{
@@ -1300,7 +1364,8 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div style={{ fontSize: 11, color: '#666' }}>
-        默认值：阈值 {DEFAULT_SETTINGS.snapMaxDistM} m · 半径{' '}
+        默认值：坐标系 {COORDINATE_SYSTEM_LABELS[DEFAULT_SETTINGS.trackCoordinateSystem]} · 阈值{' '}
+        {DEFAULT_SETTINGS.snapMaxDistM} m · 半径{' '}
         {DEFAULT_SETTINGS.minimapViewRadiusM} m · 俯视 {DEFAULT_SETTINGS.minimapTiltDeg}° · 线宽{' '}
         {DEFAULT_SETTINGS.minimapStrokeWidth}
       </div>

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { TelemetryTrack, Track, PlayerProfile } from '../data/schema';
+import { isCoordinateSystem, type CoordinateSystem } from '../util/coordinateSystems';
 import type { SpeedUnit } from '../util/units';
 
 export type WidgetId =
@@ -30,6 +31,7 @@ const PRESETS_KEY = 'hud5.presets.v1';
 const SETTINGS_KEY = 'hud5.settings.v1';
 
 export interface HudSettings {
+  trackCoordinateSystem: CoordinateSystem;
   snapToRoads: boolean;
   snapMaxDistM: number;
   minimapViewRadiusM: number;
@@ -38,6 +40,7 @@ export interface HudSettings {
 }
 
 export const DEFAULT_SETTINGS: HudSettings = {
+  trackCoordinateSystem: 'wgs84',
   snapToRoads: true,
   snapMaxDistM: 5,
   minimapViewRadiusM: 50,
@@ -49,6 +52,9 @@ function normalizeSettings(parsed: unknown): HudSettings {
   const out: HudSettings = { ...DEFAULT_SETTINGS };
   if (parsed && typeof parsed === 'object') {
     const rec = parsed as Record<string, unknown>;
+    if (typeof rec.trackCoordinateSystem === 'string' && isCoordinateSystem(rec.trackCoordinateSystem)) {
+      out.trackCoordinateSystem = rec.trackCoordinateSystem;
+    }
     if (typeof rec.snapToRoads === 'boolean') out.snapToRoads = rec.snapToRoads;
     if (typeof rec.snapMaxDistM === 'number' && rec.snapMaxDistM >= 0) {
       out.snapMaxDistM = rec.snapMaxDistM;

@@ -34,3 +34,17 @@ test('buildProjectGeoJson creates minimap driven and reference layers', () => {
   assert.equal(geo.features[1].properties.highway, 'cycleway');
   assert.equal(geo.features[2].properties.kind, 'metadata');
 });
+
+test('parseGpxTrackPoints can normalize GCJ-02 track points to WGS-84', () => {
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><trkseg>
+    <trkpt lat="39.91640428150164" lon="116.41024449916938"><ele>90</ele></trkpt>
+  </trkseg></trk>
+</gpx>`;
+
+  const [point] = parseGpxTrackPoints(gpx, 'gcj02');
+
+  assert.ok(Math.abs(point.lon - 116.404) < 0.00002);
+  assert.ok(Math.abs(point.lat - 39.915) < 0.00002);
+});

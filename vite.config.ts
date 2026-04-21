@@ -22,12 +22,14 @@ export default defineConfig({
             const body = await readJsonBody(req);
             const gpxText = String(body.gpxText ?? '');
             const inputName = String(body.inputName ?? 'track.gpx');
+            const coordinateSystem = String(body.coordinateSystem ?? 'wgs84');
             if (!gpxText.trim()) throw new Error('Missing gpxText');
 
             const { enrichGpxText } = await import('./scripts/enrich-gpx-with-osm.mjs');
             const result = await enrichGpxText(gpxText, {
               inputName,
               outDir: path.resolve(server.config.root, 'output'),
+              coordinateSystem,
             });
 
             res.statusCode = 200;
