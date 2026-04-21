@@ -2,6 +2,8 @@
 
 一个基于 React + Vite 的赛车 HUD 叠加层工具，用于把车辆遥测、路线轨迹和视频素材同步播放，并导出可用于剪辑软件的透明 HUD 视频。
 
+![HUD5 Overlay preview](public/preview.png)
+
 项目当前的视觉方向参考了 Forza Horizon 风格：速度表、进度/时间、右上角名次、小地图轨迹、玩家名称和海拔等信息都会以固定 16:9 HUD 舞台渲染。
 
 ## 功能
@@ -11,20 +13,12 @@
 - 加载视频：支持 `.mp4`、`.mov`、`.webm`、`.m4v`
 - 视频与遥测时间同步
 - 小地图显示路线、方向、已行驶轨迹和比例尺
+- 支持 WGS-84 / GCJ-02 / BD-09 轨迹坐标系，导入后统一转换为 WGS-84
+- 支持 OSM 路网补全、轨迹点吸附到参考道路、可调小地图视野/俯视角/线宽
 - 支持 `km/h` / `MPH` 切换
 - 支持拖拽调整 HUD 组件位置，并保存到 `localStorage`
 - 支持用 Puppeteer + FFmpeg 导出透明 WebM / ProRes 视频
 - 提供 OBD 长格式日志转换脚本
-
-## 技术栈
-
-- React 18
-- TypeScript
-- Vite
-- Zustand
-- Papa Parse
-- `@tmcw/togeojson`
-- Puppeteer
 
 ## 快速开始
 
@@ -70,20 +64,20 @@ npm run export
 
 CSV 至少需要包含：
 
-| 字段 | 必填 | 说明 |
-| --- | --- | --- |
-| `t` | 是 | 时间，单位秒 |
-| `speed_kmh` 或 `speed` | 是 | 车速，单位 km/h |
-| `rpm` | 否 | 发动机转速 |
-| `rpm_max` | 否 | 转速表最大值 |
-| `gear` | 否 | 档位，支持数字、`N`、`R` |
-| `throttle` | 否 | 油门，`0` 到 `1` |
-| `brake` | 否 | 刹车，`0` 到 `1` |
-| `abs` | 否 | ABS 状态，支持 `1/0`、`true/false`、`yes/no` |
-| `tcs` | 否 | TCS 状态 |
-| `progress` | 否 | 赛道进度，`0` 到 `1` |
-| `position_current` | 否 | 当前名次 |
-| `position_total` | 否 | 总参赛车辆数 |
+| 字段                       | 必填 | 说明                                               |
+| -------------------------- | ---- | -------------------------------------------------- |
+| `t`                      | 是   | 时间，单位秒                                       |
+| `speed_kmh` 或 `speed` | 是   | 车速，单位 km/h                                    |
+| `rpm`                    | 否   | 发动机转速                                         |
+| `rpm_max`                | 否   | 转速表最大值                                       |
+| `gear`                   | 否   | 档位，支持数字、`N`、`R`                       |
+| `throttle`               | 否   | 油门，`0` 到 `1`                               |
+| `brake`                  | 否   | 刹车，`0` 到 `1`                               |
+| `abs`                    | 否   | ABS 状态，支持 `1/0`、`true/false`、`yes/no` |
+| `tcs`                    | 否   | TCS 状态                                           |
+| `progress`               | 否   | 赛道进度，`0` 到 `1`                           |
+| `position_current`       | 否   | 当前名次                                           |
+| `position_total`         | 否   | 总参赛车辆数                                       |
 
 示例：
 
@@ -116,6 +110,8 @@ t,speed_kmh,rpm,rpm_max,gear,throttle,brake,abs,tcs,progress,position_current,po
 
 路线会被投影到本地平面坐标后用于小地图。
 
+默认会把 GPX / GeoJSON 坐标当作 WGS-84。若轨迹来自国内地图或其他 GCJ-02 / BD-09 来源，可以在顶部工具栏的“高级设置”里把“原始坐标系”改为对应值。应用会在投影、小地图渲染、OSM 路网补全和道路吸附前统一转换到 WGS-84。
+
 GeoJSON 图层可以通过 `properties.kind` 或 `properties.type` 指定：
 
 - `driven`：实际行驶轨迹
@@ -133,6 +129,12 @@ npm run enrich:gpx -- local/activity_256997965.gpx output
 ```
 
 Web UI 中也可以先拖入 GPX，再点击顶部工具栏的“补全路网”按钮；应用会通过本地 Vite 开发服务器把补全结果保存到 `output/`，并立即加载带 `reference` 周边道路的小地图数据。
+
+如果 GPX 来源不是 WGS-84，先在“高级设置”里选择正确的原始坐标系，再点击“补全路网”。命令行脚本也支持 `--coord`：
+
+```bash
+node scripts/enrich-gpx-with-osm.mjs local/activity.gpx output --coord=gcj02
+```
 
 输出文件：
 
@@ -197,6 +199,7 @@ node scripts/export-frames.mjs \
   --fps 60 \
   --width 1920 \
   --height 1080 \
+  --coord wgs84 \
   --out out/hud.webm
 ```
 
@@ -217,14 +220,15 @@ node scripts/export-frames.mjs \
 /?telemetry=/samples/telemetry.csv&track=/samples/track.gpx&player=ANNA&unit=kmh&t=0
 ```
 
-| 参数 | 说明 |
-| --- | --- |
-| `telemetry` | 遥测文件 URL |
-| `track` | GPX 或 GeoJSON 文件 URL |
-| `player` | 玩家名称 |
-| `unit` | `kmh` 或 `mph` |
-| `t` | 初始时间，单位秒 |
-| `exporter=1` | 开启透明导出模式，隐藏控制栏 |
+| 参数           | 说明                                             |
+| -------------- | ------------------------------------------------ |
+| `telemetry`  | 遥测文件 URL                                     |
+| `track`      | GPX 或 GeoJSON 文件 URL                          |
+| `player`     | 玩家名称                                         |
+| `unit`       | `kmh` 或 `mph`                               |
+| `coord`      | 轨迹原始坐标系：`wgs84`、`gcj02` 或 `bd09` |
+| `t`          | 初始时间，单位秒                                 |
+| `exporter=1` | 开启透明导出模式，隐藏控制栏                     |
 
 ## 布局编辑
 
@@ -242,6 +246,18 @@ hud5.layout.v1
 hud5.presets.v1
 ```
 
+高级 HUD 设置会保存到浏览器 `localStorage`：
+
+```text
+hud5.settings.v1
+```
+
+高级设置当前包括：
+
+- 轨迹原始坐标系：`WGS-84`、`GCJ-02`、`BD-09`
+- 路径吸附：是否把实际行驶点吸附到 `reference` 道路，以及最大吸附距离
+- 小地图：可视半径、俯视角和道路线宽
+
 如果布局错乱，可以点击“重置”恢复默认位置。
 
 ## 项目结构
@@ -258,18 +274,21 @@ src/
     Draggable.tsx
   data/                   # 遥测和轨迹解析
   playback/               # 播放状态、布局状态和 rAF 播放循环
-  util/                   # 单位换算和投影工具
+  util/                   # 单位换算、坐标系转换、投影和导出 URL 工具
 scripts/
   convert-obd-log.mjs     # OBD 长格式日志转换
+  enrich-gpx-with-osm.mjs # GPX 路网补全和 OSM 匹配
   export-frames.mjs       # 透明 HUD 导出
   generate-sample.mjs     # 生成示例数据
 public/samples/           # 示例 telemetry 和 track
 design-ref/               # 视觉参考图
 ```
+## 技术栈
 
-## 开发提示
-
-- HUD 舞台固定为 `1920 x 1080`，实际显示时按容器等比缩放。
-- 拖拽布局记录的是 HUD 舞台坐标里的像素偏移，不是浏览器窗口像素。
-- 有视频时，视频元素是时间源；没有视频时，播放循环由 `requestAnimationFrame` 推进。
-- 小地图的黄条会在当前插值位置截断，避免箭头进入青色路线但黄条未跟上的情况。
+- React 18
+- TypeScript
+- Vite
+- Zustand
+- Papa Parse
+- `@tmcw/togeojson`
+- Puppeteer
