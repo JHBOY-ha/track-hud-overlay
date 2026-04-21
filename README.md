@@ -223,6 +223,8 @@ node scripts/export-frames.mjs \
 > [!IMPORTANT]
 > 导出 `.webm`、`.mov` 或 `.mp4` 需要本机安装 `ffmpeg`，并确保它在 `PATH` 中。
 
+![预览图](assets/preview.jpg)
+
 ## URL 参数
 
 应用支持通过 URL 参数加载数据，便于导出和自动化：
