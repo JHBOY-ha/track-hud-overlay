@@ -233,7 +233,13 @@ node scripts/export-frames.mjs \
 布局偏移会保存到浏览器 `localStorage`：
 
 ```text
-hud5.layout.v4
+hud5.layout.v1
+```
+
+布局预设会保存到浏览器 `localStorage`：
+
+```text
+hud5.presets.v1
 ```
 
 如果布局错乱，可以点击“重置”恢复默认位置。
