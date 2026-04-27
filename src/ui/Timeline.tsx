@@ -280,6 +280,12 @@ export function Timeline() {
         const b = t;
         usePlayback.getState().setSelection(Math.min(a, b), Math.max(a, b));
       } else if (drag.kind === 'selection-move') {
+        // Only commit a move once the pointer has clearly travelled — otherwise
+        // a plain click inside the selection body would never reach the
+        // pointer-up "seek" branch below.
+        const dx = e.clientX - drag.startClientX;
+        const dy = e.clientY - drag.startClientY;
+        if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
         const a = (drag.initialSelStart ?? 0) + dt;
         const b = (drag.initialSelEnd ?? 0) + dt;
         usePlayback.getState().setSelection(a, b);
@@ -292,6 +298,15 @@ export function Timeline() {
       }
     };
     const onUp = (e: PointerEvent) => {
+      if (drag.kind === 'selection-move') {
+        const dx = e.clientX - drag.startClientX;
+        const dy = e.clientY - drag.startClientY;
+        if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
+          usePlayback.getState().seek(drag.startTime);
+          setDrag(null);
+          return;
+        }
+      }
       if ((drag.kind === 'offset' || drag.kind === 'trim-left' || drag.kind === 'trim-right') && drag.source) {
         const dx = e.clientX - drag.startClientX;
         const dy = e.clientY - drag.startClientY;
@@ -534,9 +549,6 @@ export function Timeline() {
         >
           设为终点
         </button>
-        <span style={{ marginLeft: 'auto', color: '#777', fontSize: 11 }}>
-          点=选条带 · Del=删除 · 拖边缘=裁剪 · 拖条带=对齐 · Shift+拖=框选 · 拖端把手=改选区 · 点空白=跳转
-        </span>
       </div>
 
       {/* Track region */}
