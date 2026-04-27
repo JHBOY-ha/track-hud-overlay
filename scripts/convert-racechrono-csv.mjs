@@ -2,14 +2,24 @@
 // telemetry CSV format. Gear is derived from rpm / speed using the vehicle's
 // gear-ratio table (default: Porsche 987.1 Cayman S 5AT, 265/40ZR18).
 //
+// RaceChrono interleaves sensor channels at different rates (GPS ~100Hz,
+// OBD ~1-10Hz, IMU ~200Hz) — each row only carries values for the channels
+// that fired at that timestamp, others are blank. We forward-fill state so
+// every emitted sample carries the most recent reading per channel.
+//
 // Usage:
 //   node scripts/convert-racechrono-csv.mjs <input.csv> [out.csv]
 //        [--vehicle="Porsche 987.1 Cayman S 5AT"]
-//        [--ratios=local/bmw_e63_..._gear_ratios_with_final_drive.csv]
-//        [--tire=265/40R18]   # override tire size
-//        [--rpm-idle=700] [--min-kmh=5]
+//        [--ratios=local/..._gear_ratios_with_final_drive.csv]
+//        [--tire=265/40R18]               # override stock tire
+//        [--rpm-idle=700] [--min-kmh=5]   # gear estimation thresholds
+//        [--position-current=10] [--position-total=12]
+//        [--rate=N]                       # force fixed Hz output
+//        [--speed-source=gps|obd|calc]    # default: gps
 //
-// Output columns: t, speed_kmh, rpm, throttle, gear, lat, lon, altitude, bearing
+// Output columns (compatible with scripts/convert-obd-log.mjs):
+//   t, speed_kmh, rpm, rpm_max, gear, throttle, brake, abs, tcs,
+//   progress, position_current, position_total, lat, lon, altitude, bearing
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -21,6 +31,10 @@ const opts = {
   tire: null,
   rpmIdle: 700,
   minKmh: 5,
+  positionCurrent: 10,
+  positionTotal: 12,
+  rate: null,
+  speedSource: 'gps',
 };
 for (const a of args) {
   if (a.startsWith('--vehicle=')) opts.vehicle = a.slice(10);
@@ -28,25 +42,26 @@ for (const a of args) {
   else if (a.startsWith('--tire=')) opts.tire = a.slice(7);
   else if (a.startsWith('--rpm-idle=')) opts.rpmIdle = Number(a.slice(11));
   else if (a.startsWith('--min-kmh=')) opts.minKmh = Number(a.slice(10));
+  else if (a.startsWith('--position-current=')) opts.positionCurrent = Number(a.slice(19));
+  else if (a.startsWith('--position-total=')) opts.positionTotal = Number(a.slice(17));
+  else if (a.startsWith('--rate=')) opts.rate = Number(a.slice(7));
+  else if (a.startsWith('--speed-source=')) opts.speedSource = a.slice(15);
   else positional.push(a);
 }
 const [inPath, outPathArg] = positional;
 if (!inPath) {
-  console.error('usage: node scripts/convert-racechrono-csv.mjs <input.csv> [out.csv] [--vehicle=...] [--ratios=...] [--tire=...]');
+  console.error('usage: node scripts/convert-racechrono-csv.mjs <input.csv> [out.csv] [...flags]');
   process.exit(1);
 }
 const outPath = outPathArg ?? inPath.replace(/\.csv$/i, '') + '.hud.csv';
 
 // --- tire size → rolling circumference (meters) ---
 function tireCircumference(spec) {
-  // e.g. "265/40R18" or "265/40ZR18"
   const m = /^(\d+)\/(\d+)\s*Z?R\s*(\d+)/i.exec(spec.trim());
   if (!m) throw new Error(`unrecognized tire size: ${spec}`);
-  const widthMm = Number(m[1]);
-  const aspect = Number(m[2]);
-  const rimIn = Number(m[3]);
-  const sidewallMm = widthMm * (aspect / 100);
-  const diameterMm = rimIn * 25.4 + 2 * sidewallMm;
+  const [, w, ar, rim] = m;
+  const sidewallMm = Number(w) * (Number(ar) / 100);
+  const diameterMm = Number(rim) * 25.4 + 2 * sidewallMm;
   return Math.PI * (diameterMm / 1000);
 }
 
@@ -68,15 +83,13 @@ function loadRatios(file, vehicle) {
   return { gears, tire };
 }
 
-// --- parse RaceChrono CSV (skips preamble, handles duplicate column names) ---
-function parseRaceChrono(text) {
+// --- parse RaceChrono CSV, return ordered events with channel tags ---
+function parseRaceChrono(text, speedSource) {
   const lines = text.split(/\r?\n/);
-  // Find the header row: starts with "timestamp,"
   const headerIdx = lines.findIndex((l) => /^timestamp,/.test(l));
   if (headerIdx < 0) throw new Error('not a RaceChrono CSV (no timestamp header)');
   const header = lines[headerIdx].split(',');
   const sourceRow = lines[headerIdx + 2]?.split(',') ?? [];
-  // Resolve duplicate column names by source tag (gps / obd / calc)
   const find = (name, sourceTag) => {
     for (let i = 0; i < header.length; i++) {
       if (header[i] !== name) continue;
@@ -88,38 +101,49 @@ function parseRaceChrono(text) {
   };
   const cols = {
     elapsed: find('elapsed_time'),
+    distance: find('distance_traveled'),
     lat: find('latitude'),
     lon: find('longitude'),
     altitude: find('altitude'),
     bearing: find('bearing'),
     speedGps: find('speed', 'gps'),
     speedObd: find('speed', 'obd'),
+    speedCalc: find('speed', 'calc'),
     rpm: find('rpm'),
     throttle: find('accelerator_pos'),
   };
-  const dataLines = lines.slice(headerIdx + 3).filter((l) => l && !/^\s*$/.test(l));
-  const rows = [];
-  for (const line of dataLines) {
+  const speedCol = cols[`speed${speedSource[0].toUpperCase()}${speedSource.slice(1)}`];
+  if (speedCol == null || speedCol < 0) throw new Error(`speed source "${speedSource}" not found`);
+
+  const num = (v) => {
+    if (v === undefined || v === '' || v == null) return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+
+  const events = [];
+  for (let i = headerIdx + 3; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line || /^\s*$/.test(line)) continue;
     const f = line.split(',');
-    const t = Number(f[cols.elapsed]);
-    if (!Number.isFinite(t)) continue;
-    const speedMps = Number(f[cols.speedGps]);
-    rows.push({
+    const t = num(f[cols.elapsed]);
+    if (t === undefined) continue;
+    events.push({
       t,
-      speed_kmh: Number.isFinite(speedMps) ? speedMps * 3.6 : NaN,
-      rpm: cols.rpm >= 0 ? Number(f[cols.rpm]) : NaN,
-      throttle: cols.throttle >= 0 ? Number(f[cols.throttle]) : NaN,
-      lat: Number(f[cols.lat]),
-      lon: Number(f[cols.lon]),
-      altitude: Number(f[cols.altitude]),
-      bearing: Number(f[cols.bearing]),
+      speed_mps: num(f[speedCol]),
+      rpm: num(f[cols.rpm]),
+      throttle_pct: num(f[cols.throttle]),
+      distance_m: num(f[cols.distance]),
+      lat: num(f[cols.lat]),
+      lon: num(f[cols.lon]),
+      altitude: num(f[cols.altitude]),
+      bearing: num(f[cols.bearing]),
     });
   }
-  return rows;
+  return events;
 }
 
-// --- gear estimation ---
-// rpm = (v_mps / circumference) * overall_ratio * 60
+// --- gear estimation: rpm = (v_mps / circumference) * overall * 60 ---
 function makeGearEstimator(gears, circumference, { rpmIdle, minKmh }) {
   return (speedKmh, rpm) => {
     if (!Number.isFinite(speedKmh) || !Number.isFinite(rpm)) return '';
@@ -129,7 +153,6 @@ function makeGearEstimator(gears, circumference, { rpmIdle, minKmh }) {
     for (const g of gears) {
       const predicted = (vMps / circumference) * g.overall * 60;
       if (predicted <= 0) continue;
-      // Compare in log space so ratios match symmetrically
       const err = Math.abs(Math.log(rpm / predicted));
       if (!best || err < best.err) best = { gear: g.gear, err };
     }
@@ -144,36 +167,105 @@ const circumference = tireCircumference(tire);
 console.error(`vehicle: ${opts.vehicle}`);
 console.error(`gears:   ${gears.map((g) => `${g.gear}=${g.overall}`).join(', ')}`);
 console.error(`tire:    ${tire}  (circumference ${circumference.toFixed(4)} m)`);
+console.error(`speed:   ${opts.speedSource}`);
 
 const text = fs.readFileSync(inPath, 'utf8');
-const rows = parseRaceChrono(text);
-console.error(`samples: ${rows.length}`);
+const events = parseRaceChrono(text, opts.speedSource);
+console.error(`events:  ${events.length}`);
 
+// First pass: max distance for progress normalization, max rpm for rpm_max.
+let distanceMax = 0;
+let rpmMaxObserved = 0;
+for (const e of events) {
+  if (Number.isFinite(e.distance_m) && e.distance_m > distanceMax) distanceMax = e.distance_m;
+  if (Number.isFinite(e.rpm) && e.rpm > rpmMaxObserved) rpmMaxObserved = e.rpm;
+}
+const rpmMax = Math.max(6000, Math.ceil((rpmMaxObserved + 200) / 500) * 500);
+
+// Decide output sample times.
+let sampleTimes;
+if (opts.rate) {
+  sampleTimes = [];
+  const tStart = events[0].t;
+  const tEnd = events[events.length - 1].t;
+  const step = 1 / opts.rate;
+  for (let t = tStart; t <= tEnd + 1e-9; t += step) sampleTimes.push(t);
+} else {
+  // One row per speed update — that's the HUD's required field, and it
+  // matches RaceChrono's GPS cadence (~100Hz) without bloating with IMU rows.
+  const seen = new Set();
+  sampleTimes = [];
+  for (const e of events) {
+    if (e.speed_mps === undefined) continue;
+    if (seen.has(e.t)) continue;
+    seen.add(e.t);
+    sampleTimes.push(e.t);
+  }
+}
+
+// Forward-fill across events.
+const state = {};
+let evtIdx = 0;
 const estimateGear = makeGearEstimator(gears, circumference, opts);
-
-const outHeader = ['t', 'speed_kmh', 'rpm', 'throttle', 'gear', 'lat', 'lon', 'altitude', 'bearing'];
-const out = [outHeader.join(',')];
-const fmt = (v, d = 4) => (Number.isFinite(v) ? Number(v).toFixed(d) : '');
 const gearHist = new Map();
-for (const r of rows) {
-  const gear = estimateGear(r.speed_kmh, r.rpm);
+const fmt = (v, d = 4) => (Number.isFinite(v) ? Number(v).toFixed(d) : '');
+
+const headerCols = [
+  't', 'speed_kmh', 'rpm', 'rpm_max', 'gear', 'throttle', 'brake', 'abs', 'tcs',
+  'progress', 'position_current', 'position_total', 'lat', 'lon', 'altitude', 'bearing',
+];
+const out = [headerCols.join(',')];
+
+for (const t of sampleTimes) {
+  while (evtIdx < events.length && events[evtIdx].t <= t) {
+    const e = events[evtIdx++];
+    if (e.speed_mps !== undefined) state.speed_mps = e.speed_mps;
+    if (e.rpm !== undefined) state.rpm = e.rpm;
+    if (e.throttle_pct !== undefined) state.throttle_pct = e.throttle_pct;
+    if (e.distance_m !== undefined) state.distance_m = e.distance_m;
+    if (e.lat !== undefined) state.lat = e.lat;
+    if (e.lon !== undefined) state.lon = e.lon;
+    if (e.altitude !== undefined) state.altitude = e.altitude;
+    if (e.bearing !== undefined) state.bearing = e.bearing;
+  }
+  if (state.speed_mps === undefined) continue;
+
+  const speedKmh = state.speed_mps * 3.6;
+  const rpm = state.rpm;
+  const throttle = state.throttle_pct !== undefined
+    ? Math.max(0, Math.min(1, state.throttle_pct / 100))
+    : undefined;
+  const gear = estimateGear(speedKmh, rpm);
   if (gear !== '') gearHist.set(gear, (gearHist.get(gear) ?? 0) + 1);
+  const progress = distanceMax > 0 && state.distance_m !== undefined
+    ? Math.max(0, Math.min(1, state.distance_m / distanceMax))
+    : undefined;
+
   out.push([
-    fmt(r.t, 3),
-    fmt(r.speed_kmh, 3),
-    Number.isFinite(r.rpm) ? r.rpm.toFixed(0) : '',
-    fmt(r.throttle, 2),
+    fmt(t, 3),
+    speedKmh.toFixed(2),
+    Number.isFinite(rpm) ? rpm.toFixed(0) : '',
+    rpmMax,
     gear,
-    fmt(r.lat, 7),
-    fmt(r.lon, 7),
-    fmt(r.altitude, 2),
-    fmt(r.bearing, 2),
+    throttle !== undefined ? throttle.toFixed(3) : '',
+    '', // brake — not exposed by RaceChrono OBD
+    '', // abs
+    '', // tcs
+    progress !== undefined ? progress.toFixed(4) : '',
+    opts.positionCurrent,
+    opts.positionTotal,
+    fmt(state.lat, 7),
+    fmt(state.lon, 7),
+    fmt(state.altitude, 2),
+    fmt(state.bearing, 2),
   ].join(','));
 }
 
 fs.mkdirSync(path.dirname(path.resolve(outPath)), { recursive: true });
-fs.writeFileSync(outPath, out.join('\n'));
-console.error(`wrote: ${outPath}`);
+fs.writeFileSync(outPath, out.join('\n') + '\n');
+console.error(`wrote: ${outPath}  (${out.length - 1} rows)`);
+console.error(`rpm observed max: ${rpmMaxObserved} → rpm_max: ${rpmMax}`);
+if (distanceMax > 0) console.error(`distance max: ${distanceMax.toFixed(1)} m`);
 const total = [...gearHist.values()].reduce((a, b) => a + b, 0) || 1;
 console.error('gear distribution:');
 for (const g of gears) {
