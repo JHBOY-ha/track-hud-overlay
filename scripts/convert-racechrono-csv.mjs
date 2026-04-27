@@ -100,6 +100,7 @@ function parseRaceChrono(text, speedSource) {
     return -1;
   };
   const cols = {
+    timestamp: find('timestamp'),
     elapsed: find('elapsed_time'),
     distance: find('distance_traveled'),
     lat: find('latitude'),
@@ -126,10 +127,12 @@ function parseRaceChrono(text, speedSource) {
     const line = lines[i];
     if (!line || /^\s*$/.test(line)) continue;
     const f = line.split(',');
-    const t = num(f[cols.elapsed]);
-    if (t === undefined) continue;
+    const ts = num(f[cols.timestamp]);
+    const elapsed = num(f[cols.elapsed]);
+    if (ts === undefined && elapsed === undefined) continue;
     events.push({
-      t,
+      ts,
+      t: elapsed,
       speed_mps: num(f[speedCol]),
       rpm: num(f[cols.rpm]),
       throttle_pct: num(f[cols.throttle]),
@@ -182,12 +185,31 @@ for (const e of events) {
 }
 const rpmMax = Math.max(6000, Math.ceil((rpmMaxObserved + 200) / 500) * 500);
 
-// Decide output sample times.
+// Time base: prefer Unix timestamp (wall-clock) so downstream timecode
+// conversion can align against the recording's real start. Emit `t` as
+// seconds-since-local-midnight to match scripts/convert-obd-log.mjs.
+const hasTimestamp = events.some((e) => Number.isFinite(e.ts));
+const tKey = hasTimestamp ? 'ts' : 't';
+const t0 = events[0][tKey];
+let toOutT;
+if (hasTimestamp) {
+  const startDate = new Date(t0 * 1000);
+  const localMidnight = new Date(
+    startDate.getFullYear(), startDate.getMonth(), startDate.getDate(),
+  ).getTime() / 1000;
+  toOutT = (ts) => ts - localMidnight;
+  console.error(`recording start: ${startDate.toLocaleString()}`);
+} else {
+  toOutT = (t) => t; // fall back to elapsed_time as-is
+  console.error('no Unix timestamp column; emitting elapsed_time');
+}
+
+// Decide output sample times (in the chosen time base).
 let sampleTimes;
 if (opts.rate) {
   sampleTimes = [];
-  const tStart = events[0].t;
-  const tEnd = events[events.length - 1].t;
+  const tStart = events[0][tKey];
+  const tEnd = events[events.length - 1][tKey];
   const step = 1 / opts.rate;
   for (let t = tStart; t <= tEnd + 1e-9; t += step) sampleTimes.push(t);
 } else {
@@ -197,9 +219,10 @@ if (opts.rate) {
   sampleTimes = [];
   for (const e of events) {
     if (e.speed_mps === undefined) continue;
-    if (seen.has(e.t)) continue;
-    seen.add(e.t);
-    sampleTimes.push(e.t);
+    const k = e[tKey];
+    if (k === undefined || seen.has(k)) continue;
+    seen.add(k);
+    sampleTimes.push(k);
   }
 }
 
@@ -217,7 +240,7 @@ const headerCols = [
 const out = [headerCols.join(',')];
 
 for (const t of sampleTimes) {
-  while (evtIdx < events.length && events[evtIdx].t <= t) {
+  while (evtIdx < events.length && events[evtIdx][tKey] <= t) {
     const e = events[evtIdx++];
     if (e.speed_mps !== undefined) state.speed_mps = e.speed_mps;
     if (e.rpm !== undefined) state.rpm = e.rpm;
@@ -242,7 +265,7 @@ for (const t of sampleTimes) {
     : undefined;
 
   out.push([
-    fmt(t, 3),
+    fmt(toOutT(t), 3),
     speedKmh.toFixed(2),
     Number.isFinite(rpm) ? rpm.toFixed(0) : '',
     rpmMax,
