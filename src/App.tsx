@@ -448,7 +448,7 @@ export function App() {
             />
           )}
           <Hud />
-          {!telemetry && !videoUrl && !exporterMode && (
+          {!telemetry && !track && !videoUrl && !exporterMode && (
             <div
               style={{
                 position: 'absolute',

@@ -333,9 +333,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setUnit: u => set({ unit: u }),
   play: () => {
     const s = get();
-    if (!s.telemetry && !s.videoUrl) return;
-    // If at the end of the selection, rewind to the start before playing.
     const [start, end] = effectiveRangeFromState(s);
+    if (end <= start) return;
     if (s.currentTime >= end - 1e-6) set({ currentTime: start });
     set({ playing: true });
   },
