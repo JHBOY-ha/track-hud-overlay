@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
-import { usePlayback } from '../playback/store';
+import { effectiveRange, usePlayback } from '../playback/store';
 import { sampleAt } from '../data/telemetry';
 import { Speedometer } from './Speedometer';
 import { Minimap } from './Minimap';
@@ -36,13 +36,20 @@ export function Hud() {
   const telemetry = usePlayback(s => s.telemetry);
   const track = usePlayback(s => s.track);
   const currentTime = usePlayback(s => s.currentTime);
+  const telemetryOffset = usePlayback(s => s.telemetryOffset);
+  const trackOffset = usePlayback(s => s.trackOffset);
   const unit = usePlayback(s => s.unit);
   const profile = usePlayback(s => s.profile);
+  const rangeStart = usePlayback(s => effectiveRange(s)[0]);
 
+  // Telemetry/track samples are keyed by their intrinsic absolute time;
+  // playhead is on the shared axis, so subtract the source's offset.
   const sample = useMemo(
-    () => (telemetry ? sampleAt(telemetry, currentTime) : null),
-    [telemetry, currentTime],
+    () => (telemetry ? sampleAt(telemetry, currentTime - telemetryOffset) : null),
+    [telemetry, currentTime, telemetryOffset],
   );
+  const trackTime = currentTime - trackOffset;
+  const elapsed = currentTime - rangeStart;
 
   const rpmMax = telemetry?.rpmMax ?? 8000;
 
@@ -92,12 +99,12 @@ export function Hud() {
         <div style={bracket('bl')} />
         <div style={bracket('br')} />
 
-        <TopLeftStatus sample={sample} currentTime={currentTime} />
+        <TopLeftStatus sample={sample} currentTime={elapsed} />
         <TopRightPosition sample={sample} />
         <Minimap
           track={track}
           sample={sample}
-          currentTime={currentTime}
+          currentTime={trackTime}
           playerName={profile.name}
         />
         <Speedometer sample={sample} unit={unit} rpmMax={rpmMax} />

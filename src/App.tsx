@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Hud } from './hud/Hud';
-import { usePlayback, startPlaybackLoop } from './playback/store';
+import { effectiveRange, startPlaybackLoop, usePlayback } from './playback/store';
+import { Timeline } from './ui/Timeline';
 import { parseTelemetryCsv, parseTelemetryJson } from './data/telemetry';
 import { parseGpx, parseGeoJson } from './data/track';
 import { DEFAULT_SETTINGS, type HudSettings } from './playback/store';
@@ -10,6 +11,12 @@ import {
   isCoordinateSystem,
   type CoordinateSystem,
 } from './util/coordinateSystems';
+import { PROJECT_FPS_OPTIONS } from './util/timecode';
+import { parseMp4Timecode } from './util/videoTimecode';
+
+function secondsToFrame(seconds: number, fps: number): number {
+  return Math.round(seconds * fps);
+}
 
 async function loadTelemetryFromUrl(url: string) {
   const res = await fetch(url);
@@ -65,10 +72,10 @@ export function App() {
   const [trackUrl, setTrackUrl] = useState<string | null>(null);
   const dropRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const parsedTrackSourceRef = useRef<TrackSource | null>(null);
 
   const telemetry = usePlayback(s => s.telemetry);
   const track = usePlayback(s => s.track);
-  const currentTime = usePlayback(s => s.currentTime);
   const playing = usePlayback(s => s.playing);
   const rate = usePlayback(s => s.rate);
   const unit = usePlayback(s => s.unit);
@@ -77,10 +84,8 @@ export function App() {
   const videoAspect = usePlayback(s => s.videoAspect);
   const previewAspect = usePlayback(s => s.previewAspect);
   const stageAspect = previewAspect ?? videoAspect;
-  const videoDuration = usePlayback(s => s.videoDuration);
   const videoWidth = usePlayback(s => s.videoWidth);
   const videoHeight = usePlayback(s => s.videoHeight);
-  const projectDuration = usePlayback(s => s.projectDuration);
   const trackCoordinateSystem = usePlayback(s => s.settings.trackCoordinateSystem);
   const snapToRoads = usePlayback(s => s.settings.snapToRoads);
   const snapMaxDistM = usePlayback(s => s.settings.snapMaxDistM);
@@ -98,7 +103,9 @@ export function App() {
         },
         trackCoordinateSystem,
       );
-      usePlayback.getState().setTrack(parsed);
+      const isNewSource = parsedTrackSourceRef.current !== trackSource;
+      parsedTrackSourceRef.current = trackSource;
+      usePlayback.getState().setTrack(parsed, { resetTimeline: isNewSource });
     } catch (e) {
       setError(`解析轨迹失败：${e instanceof Error ? e.message : String(e)}`);
     }
@@ -112,9 +119,6 @@ export function App() {
     if (stored?.fps && stored.fps > 0) {
       usePlayback.getState().setProjectFps(stored.fps);
     }
-    if (stored?.duration && stored.duration > 0) {
-      usePlayback.getState().setProjectDuration(stored.duration);
-    }
   }, []);
 
   // URL params: ?telemetry=...&track=...&player=...&unit=mph&exporter=1&t=0
@@ -127,6 +131,11 @@ export function App() {
     const coord = q.get('coord');
     const exporter = q.get('exporter') === '1';
     const t0 = Number(q.get('t') ?? '0');
+    const rangeStart = Number(q.get('rangeStart'));
+    const rangeEnd = Number(q.get('rangeEnd'));
+    const telemetryOffset = Number(q.get('telemetryOffset') ?? '0');
+    const trackOffset = Number(q.get('trackOffset') ?? '0');
+    const videoOffset = Number(q.get('videoOffset') ?? '0');
 
     if (player) usePlayback.getState().setProfile({ name: player });
     if (u === 'mph' || u === 'kmh') usePlayback.getState().setUnit(u);
@@ -142,13 +151,35 @@ export function App() {
       try {
         if (tel) {
           usePlayback.getState().setTelemetry(await loadTelemetryFromUrl(tel));
+          if (Number.isFinite(telemetryOffset)) {
+            usePlayback.getState().setTelemetryOffset(telemetryOffset);
+          }
           setTelemetryUrl(tel);
         }
         if (trk) {
           const loaded = await loadTrackFromUrl(trk);
+          const parsed = parseTrackText(
+            loaded.source,
+            {
+              enabled: usePlayback.getState().settings.snapToRoads,
+              maxDistM: usePlayback.getState().settings.snapMaxDistM,
+            },
+            usePlayback.getState().settings.trackCoordinateSystem,
+          );
+          parsedTrackSourceRef.current = loaded.source;
+          usePlayback.getState().setTrack(parsed, { resetTimeline: true });
+          if (Number.isFinite(trackOffset)) {
+            usePlayback.getState().setTrackOffset(trackOffset);
+          }
           setGpxSource(loaded.gpxSource);
           setTrackSource(loaded.source);
           setTrackUrl(trk);
+        }
+        if (Number.isFinite(videoOffset)) {
+          usePlayback.getState().setVideoOffset(videoOffset);
+        }
+        if (Number.isFinite(rangeStart) && Number.isFinite(rangeEnd)) {
+          usePlayback.getState().setSelection(rangeStart, rangeEnd);
         }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
       } catch (e) {
@@ -160,7 +191,11 @@ export function App() {
   // Expose exporter API
   useEffect(() => {
     (window as any).seekTo = (t: number) => {
-      usePlayback.setState({ currentTime: t, playing: false });
+      // Exporter passes relative seconds from the selected range start.
+      const s = usePlayback.getState();
+      const [start] = effectiveRange(s);
+      s.seek(start + t);
+      usePlayback.setState({ playing: false });
     };
     (window as any).readyForFrame = () =>
       new Promise(res => requestAnimationFrame(() => requestAnimationFrame(res)));
@@ -189,14 +224,25 @@ export function App() {
     let raf = 0;
     const tick = () => {
       const s = usePlayback.getState();
+      // Map between video time (0..videoDuration) and absolute axis time.
       const vt = v.currentTime;
+      const ctAbsFromVideo = vt + s.videoOffset;
       const ct = s.currentTime;
-      if (Math.abs(vt - ct) > 0.3) {
-        // Big jump — treat as external seek and push store → video.
-        v.currentTime = ct;
-      } else if (s.playing && Math.abs(vt - ct) > 0.005) {
+      const [, end] = effectiveRange(s);
+      if (Math.abs(ctAbsFromVideo - ct) > 0.3) {
+        // Big jump — store moved (user seek/selection change). Push to video,
+        // clamped within the video's own range.
+        const targetVt = Math.max(0, Math.min(s.videoDuration, ct - s.videoOffset));
+        v.currentTime = targetVt;
+      } else if (s.playing && Math.abs(ctAbsFromVideo - ct) > 0.005) {
         // Normal playback — video drives store.
-        usePlayback.setState({ currentTime: vt });
+        const next = ctAbsFromVideo;
+        if (next >= end) {
+          usePlayback.setState({ currentTime: end, playing: false });
+          v.pause();
+        } else {
+          usePlayback.setState({ currentTime: next });
+        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -237,8 +283,23 @@ export function App() {
     }
   };
 
-  const loadVideoFile = (file: File) =>
-    new Promise<void>((res, rej) => {
+  const loadVideoFile = async (file: File) => {
+    let embeddedTimecodeStart: number | null = null;
+    if (/\.(mp4|mov|m4v)$/i.test(file.name)) {
+      try {
+        const timecode = parseMp4Timecode(await file.arrayBuffer());
+        if (timecode) {
+          embeddedTimecodeStart = timecode.seconds;
+          if (PROJECT_FPS_OPTIONS.includes(timecode.fps as any)) {
+            usePlayback.getState().setProjectFps(timecode.fps);
+          }
+        }
+      } catch {
+        embeddedTimecodeStart = null;
+      }
+    }
+
+    return new Promise<void>((res, rej) => {
       const url = URL.createObjectURL(file);
       const probe = document.createElement('video');
       probe.preload = 'metadata';
@@ -250,7 +311,14 @@ export function App() {
             : 16 / 9;
         usePlayback
           .getState()
-          .setVideo(url, aspect, probe.duration || 0, probe.videoWidth, probe.videoHeight);
+          .setVideo(
+            url,
+            aspect,
+            probe.duration || 0,
+            probe.videoWidth,
+            probe.videoHeight,
+            embeddedTimecodeStart,
+          );
         res();
       };
       probe.onerror = () => {
@@ -258,6 +326,7 @@ export function App() {
         rej(new Error(`Failed to load video: ${file.name}`));
       };
     });
+  };
 
   const onDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -328,7 +397,7 @@ export function App() {
         onDrop={onDrop}
         style={{
           position: 'absolute',
-          inset: exporterMode ? 0 : '56px 0 96px 0',
+          inset: exporterMode ? 0 : '56px 0 168px 0',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
@@ -339,7 +408,7 @@ export function App() {
             position: 'relative',
             width: exporterMode
               ? '100vw'
-              : `min(100%, calc((100vh - 152px) * ${stageAspect}))`,
+              : `min(100%, calc((100vh - 224px) * ${stageAspect}))`,
             aspectRatio: `${stageAspect}`,
             background: exporterMode
               ? 'transparent'
@@ -408,8 +477,6 @@ export function App() {
             canEnrichTrack={!!gpxSource}
             enrichingTrack={enrichingTrack}
             onEnrichTrack={enrichCurrentGpx}
-            telemetryDuration={telemetry?.duration ?? 0}
-            videoDuration={videoDuration}
             videoWidth={videoWidth}
             videoHeight={videoHeight}
             telemetryUrl={telemetryUrl}
@@ -417,20 +484,13 @@ export function App() {
             hasTelemetry={!!telemetry}
             hasTrack={!!track}
           />
-          <Timeline
-            duration={projectDuration ?? Math.max(telemetry?.duration ?? 0, videoDuration)}
-            currentTime={currentTime}
-            playing={playing}
-            rate={rate}
-            hasTrack={!!track}
-            hasVideo={!!videoUrl}
-          />
+          <Timeline />
           {error && (
             <div
               style={{
                 position: 'absolute',
                 left: 16,
-                bottom: 108,
+                bottom: 180,
                 background: '#3a1a1a',
                 color: '#f88',
                 padding: '6px 10px',
@@ -452,8 +512,6 @@ function Toolbar({
   canEnrichTrack,
   enrichingTrack,
   onEnrichTrack,
-  telemetryDuration,
-  videoDuration,
   videoWidth,
   videoHeight,
   telemetryUrl,
@@ -465,8 +523,6 @@ function Toolbar({
   canEnrichTrack: boolean;
   enrichingTrack: boolean;
   onEnrichTrack: () => void;
-  telemetryDuration: number;
-  videoDuration: number;
   videoWidth: number;
   videoHeight: number;
   telemetryUrl: string | null;
@@ -605,7 +661,6 @@ function Toolbar({
           <ExportSettingsPanel
             unit={unit}
             player={profile.name}
-            defaultDuration={Math.max(telemetryDuration, videoDuration) || 10}
             defaultWidth={videoWidth > 0 ? videoWidth : 1920}
             defaultHeight={videoHeight > 0 ? videoHeight : 1080}
             defaultTelemetryUrl={telemetryUrl ?? (hasTelemetry ? '' : '/samples/telemetry.csv')}
@@ -774,7 +829,6 @@ function shellQuote(v: string): string {
 function ExportSettingsPanel({
   unit,
   player,
-  defaultDuration,
   defaultWidth,
   defaultHeight,
   defaultTelemetryUrl,
@@ -783,7 +837,6 @@ function ExportSettingsPanel({
 }: {
   unit: SpeedUnit;
   player: string;
-  defaultDuration: number;
   defaultWidth: number;
   defaultHeight: number;
   defaultTelemetryUrl: string;
@@ -792,24 +845,25 @@ function ExportSettingsPanel({
 }) {
   const [width, setWidth] = useState(() => loadStoredExport()?.width ?? defaultWidth);
   const [height, setHeight] = useState(() => loadStoredExport()?.height ?? defaultHeight);
-  const [fps, setFps] = useState(() => loadStoredExport()?.fps ?? 60);
-  const [duration, setDuration] = useState(() => {
-    const stored = loadStoredExport()?.duration;
-    return stored && stored > 0 ? stored : Math.round(defaultDuration * 100) / 100;
-  });
+  const fps = usePlayback(s => s.projectFps);
+  const telemetryOffset = usePlayback(s => s.telemetryOffset);
+  const trackOffset = usePlayback(s => s.trackOffset);
+  const videoOffset = usePlayback(s => s.videoOffset);
+  const [rangeStart, rangeEnd] = usePlayback(s => effectiveRange(s));
+  const duration = Math.max(0, rangeEnd - rangeStart);
+  const rangeStartFrame = secondsToFrame(rangeStart, fps);
+  const rangeEndFrame = secondsToFrame(rangeEnd, fps);
+  const durationFrames = Math.max(0, rangeEndFrame - rangeStartFrame);
 
   useEffect(() => {
     if (width > 0 && height > 0) {
       usePlayback.getState().setPreviewAspect(width / height);
     }
-    if (fps > 0) {
-      usePlayback.getState().setProjectFps(fps);
-    }
     usePlayback.getState().setProjectDuration(duration > 0 ? duration : null);
     try {
       localStorage.setItem(
         EXPORT_STORAGE_KEY,
-        JSON.stringify({ width, height, fps, duration }),
+        JSON.stringify({ width, height, fps }),
       );
     } catch {
       /* ignore */
@@ -843,13 +897,18 @@ function ExportSettingsPanel({
       'scripts/export-frames.mjs',
       '--telemetry', telemetryUrl,
       '--track', trackUrl,
-      '--duration', String(duration),
+      '--duration', String(durationFrames),
+      '--range-start', String(rangeStartFrame),
+      '--range-end', String(rangeEndFrame),
       '--fps', String(fps),
       '--width', String(width),
       '--height', String(height),
       '--unit', unit,
       '--player', player,
       '--coord', trackCoordinateSystem,
+      '--telemetry-offset', String(telemetryOffset),
+      '--track-offset', String(trackOffset),
+      '--video-offset', String(videoOffset),
       '--out', outPath,
     ];
     return args.map(shellQuote).join(' ');
@@ -857,12 +916,20 @@ function ExportSettingsPanel({
     telemetryUrl,
     trackUrl,
     duration,
+    durationFrames,
+    rangeStartFrame,
+    rangeEndFrame,
+    rangeStart,
+    rangeEnd,
     fps,
     width,
     height,
     unit,
     player,
     trackCoordinateSystem,
+    telemetryOffset,
+    trackOffset,
+    videoOffset,
     outPath,
   ]);
 
@@ -981,10 +1048,10 @@ function ExportSettingsPanel({
           FPS
           <select
             value={fps}
-            onChange={e => setFps(Number(e.target.value))}
+            onChange={e => usePlayback.getState().setProjectFps(Number(e.target.value))}
             style={inputStyle}
           >
-            {[24, 30, 60, 120].map(v => (
+            {PROJECT_FPS_OPTIONS.map(v => (
               <option key={v} value={v}>
                 {v}
               </option>
@@ -992,14 +1059,15 @@ function ExportSettingsPanel({
           </select>
         </label>
         <label style={{ ...labelStyle, flex: 1 }}>
-          时长 (秒)
+          时长 (帧)
           <input
             type="number"
             min={0}
             step={0.1}
-            value={duration}
-            onChange={e => setDuration(Number(e.target.value) || 0)}
-            style={inputStyle}
+            value={durationFrames}
+            readOnly
+            title={`由 range-end - range-start 自动计算，约 ${duration.toFixed(3)} 秒`}
+            style={{ ...inputStyle, color: '#aaa' }}
           />
         </label>
       </div>
@@ -1080,119 +1148,6 @@ function ExportSettingsPanel({
       <div style={{ fontSize: 11, color: '#777' }}>
         先运行 <code>npm run build && npm run preview</code>，再在另一个终端粘贴运行上面的命令。
       </div>
-    </div>
-  );
-}
-
-function Timeline({
-  duration,
-  currentTime,
-  playing,
-  rate,
-  hasTrack,
-  hasVideo,
-}: {
-  duration: number;
-  currentTime: number;
-  playing: boolean;
-  rate: number;
-  hasTrack: boolean;
-  hasVideo: boolean;
-}) {
-  const fps = usePlayback(s => s.projectFps);
-  const step = 1 / fps;
-  const currentFrame = Math.round(currentTime * fps);
-  const totalFrames = Math.round(duration * fps);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const fmtTc = (t: number) => {
-    const f = Math.max(0, Math.round(t * fps));
-    const hh = Math.floor(f / (fps * 3600));
-    const mm = Math.floor((f / (fps * 60)) % 60);
-    const ss = Math.floor((f / fps) % 60);
-    const ff = f % Math.max(1, Math.round(fps));
-    return `${pad(hh)}:${pad(mm)}:${pad(ss)}:${pad(ff)}`;
-  };
-  return (
-    <div
-      style={{
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: 96,
-        boxSizing: 'border-box',
-        background: '#181818',
-        borderTop: '1px solid #2a2a2a',
-        padding: '12px 16px',
-        fontFamily: 'system-ui, sans-serif',
-        fontSize: 12,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-      }}
-    >
-      <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-        <button
-          onClick={() => usePlayback.getState().toggle()}
-          disabled={duration === 0}
-          style={{
-            width: 32,
-            height: 28,
-            background: '#333',
-            border: '1px solid #555',
-            color: '#fff',
-            cursor: duration ? 'pointer' : 'default',
-          }}
-        >
-          {playing ? '❚❚' : '▶'}
-        </button>
-        <span
-          style={{
-            minWidth: 220,
-            color: '#aaa',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-            fontSize: 12,
-          }}
-          title={`${currentTime.toFixed(3)} / ${duration.toFixed(3)} s @ ${fps}fps`}
-        >
-          {fmtTc(currentTime)} / {fmtTc(duration)} · {currentFrame}/{totalFrames}f
-        </span>
-        <label>
-          倍速
-          <select
-            value={rate}
-            onChange={e => usePlayback.getState().setRate(Number(e.target.value))}
-            style={{ marginLeft: 6 }}
-          >
-            {[0.25, 0.5, 1, 2, 4].map(r => (
-              <option key={r} value={r}>
-                {r}×
-              </option>
-            ))}
-          </select>
-        </label>
-        <span style={{ marginLeft: 'auto', display: 'flex', gap: 12 }}>
-          <span style={{ color: hasVideo ? '#6c6' : '#666' }}>
-            {hasVideo ? '✓ 视频已加载' : '无视频'}
-          </span>
-          <span style={{ color: hasTrack ? '#6c6' : '#666' }}>
-            {hasTrack ? '✓ GPX 已加载' : '无 GPX'}
-          </span>
-        </span>
-      </div>
-      <input
-        type="range"
-        min={0}
-        max={duration || 1}
-        step={step}
-        value={currentTime}
-        onChange={e => {
-          const v = Number(e.target.value);
-          usePlayback.getState().seek(Math.round(v * fps) / fps);
-        }}
-        style={{ width: '100%' }}
-        disabled={duration === 0}
-      />
     </div>
   );
 }

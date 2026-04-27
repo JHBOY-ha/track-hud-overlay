@@ -38,7 +38,11 @@ function classifyKind(props: any, gpxType: string | undefined): TrackLayerKind {
 }
 
 function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
-  const out: RawLayer[] = [];
+  // First pass: collect raw layers with epoch-ms timestamps so we can anchor
+  // all of them to a single local midnight (and stay monotonic across
+  // midnight rollovers).
+  const epochLayers: { kind: TrackLayerKind; name?: string; points: (RawPoint & { tMs?: number })[] }[] = [];
+
   for (const feature of geo.features ?? []) {
     const g = feature.geometry;
     if (!g) continue;
@@ -49,32 +53,59 @@ function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
     const name = props.name as string | undefined;
     const shouldDenoise = denoiseGps || gpxType === 'trk' || gpxType === 'rte';
 
-    const push = (coords: number[][], base = 0): RawPoint[] =>
+    const push = (coords: number[][], base = 0): (RawPoint & { tMs?: number })[] =>
       coords.map((c, i) => {
         const ts = times?.[base + i];
+        const ms = ts ? Date.parse(ts) : NaN;
         const elev = c.length > 2 ? Number(c[2]) : NaN;
         return {
           lon: c[0],
           lat: c[1],
-          t: ts ? Date.parse(ts) / 1000 : undefined,
+          tMs: Number.isFinite(ms) ? ms : undefined,
           ele: Number.isFinite(elev) ? elev : undefined,
         };
       });
 
     if (g.type === 'LineString') {
       const points = push(g.coordinates);
-      out.push({ kind, name, points: shouldDenoise ? denoiseGpsPoints(points) : points });
+      epochLayers.push({ kind, name, points: shouldDenoise ? denoiseGpsPoints(points) : points });
     } else if (g.type === 'MultiLineString') {
       let offset = 0;
-      // Each segment becomes its own layer so pose can't jump across gaps.
       for (const seg of g.coordinates) {
         const points = push(seg, offset);
-        out.push({ kind, name, points: shouldDenoise ? denoiseGpsPoints(points) : points });
+        epochLayers.push({ kind, name, points: shouldDenoise ? denoiseGpsPoints(points) : points });
         offset += seg.length;
       }
     }
   }
-  return out.filter(l => l.points.length > 0);
+
+  // Pick anchor = local midnight of the earliest timestamp across all layers.
+  let firstMs: number | undefined;
+  for (const l of epochLayers) {
+    for (const p of l.points) {
+      if (p.tMs !== undefined && (firstMs === undefined || p.tMs < firstMs)) {
+        firstMs = p.tMs;
+      }
+    }
+  }
+  let anchorMs = 0;
+  if (firstMs !== undefined) {
+    const d = new Date(firstMs);
+    anchorMs = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  }
+
+  return epochLayers
+    .map(l => ({
+      kind: l.kind,
+      name: l.name,
+      points: l.points.map(p => ({
+        lon: p.lon,
+        lat: p.lat,
+        ele: p.ele,
+        t: p.tMs !== undefined ? (p.tMs - anchorMs) / 1000 : undefined,
+      })) as RawPoint[],
+    }))
+    .filter(l => l.points.length > 0);
 }
 
 function buildLayer(
@@ -97,13 +128,9 @@ function buildLayer(
     };
   });
 
-  if (points.length && points[0].t !== undefined) {
-    const t0 = points[0].t!;
-    for (const p of points) if (p.t !== undefined) p.t -= t0;
-  }
-
   return { kind: raw.kind, name: raw.name, points, totalLength };
 }
+
 
 function pickPrimary(layers: TrackLayer[]): TrackLayer {
   return (

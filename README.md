@@ -11,13 +11,15 @@
 - 加载并播放遥测数据：支持 `.csv` 和 `.json`
 - 加载路线数据：支持 `.gpx` 和 `.geojson`
 - 加载视频：支持 `.mp4`、`.mov`、`.webm`、`.m4v`
-- 视频与遥测时间同步
+- 共享时间轴同步 CSV / GPX / 视频，并支持拖动各素材轨道做 offset 对齐
+- 支持项目帧率 `24 / 30 / 48 / 60 / 120`，时间轴显示专业 timecode
+- 支持读取 MOV / MP4 内嵌 QuickTime `tmcd` timecode，并用作视频起始时间码
 - 小地图显示路线、方向、已行驶轨迹和比例尺
 - 支持 WGS-84 / GCJ-02 / BD-09 轨迹坐标系，导入后统一转换为 WGS-84
 - 支持 OSM 路网补全、轨迹点吸附到参考道路、可调小地图视野/俯视角/线宽
 - 支持 `km/h` / `MPH` 切换
 - 支持拖拽调整 HUD 组件位置，并保存到 `localStorage`
-- 支持用 Puppeteer + FFmpeg 导出透明 WebM / ProRes 视频
+- 支持用 Puppeteer + FFmpeg 导出透明 WebM / ProRes 视频，MOV / MP4 导出会写入 timecode
 - 提供 OBD 长格式日志转换脚本
 
 ## 快速开始
@@ -41,6 +43,14 @@ npm run dev
 - `track.gpx` / `track.geojson`
 
 也可以点击界面中的“加载示例数据”使用 `public/samples` 里的示例。
+
+## 时间轴与 timecode
+
+应用内部使用“本地当天零点后的秒数”作为共享时间轴。CSV 的 `t` 字段、GPX 的 `<time>`、视频文件内嵌的 `tmcd` timecode 都会映射到这条轴上。时间轴底部会显示 GPX / CSV / VIDEO 三条素材轨道，可以拖动轨道调整 offset，让预览和导出使用同一套对齐关系。
+
+项目帧率可设为 `24 / 30 / 48 / 60 / 120`。时间轴显示为非 drop-frame timecode：`HH:MM:SS:FF`，120fps 时帧号使用三位。
+
+GPX 示例数据的起始时间码会按文件里的 ISO 时间映射到本地当天时间。例如 `2026-04-21T10:00:00.000Z` 在 `Asia/Shanghai` 会显示为 `18:00:00:00`。
 
 ## 常用命令
 
@@ -66,7 +76,7 @@ CSV 至少需要包含：
 
 | 字段                       | 必填 | 说明                                               |
 | -------------------------- | ---- | -------------------------------------------------- |
-| `t`                      | 是   | 时间，单位秒                                       |
+| `t`                      | 是   | 本地当天零点后的秒数                               |
 | `speed_kmh` 或 `speed` | 是   | 车速，单位 km/h                                    |
 | `rpm`                    | 否   | 发动机转速                                         |
 | `rpm_max`                | 否   | 转速表最大值                                       |
@@ -83,8 +93,8 @@ CSV 至少需要包含：
 
 ```csv
 t,speed_kmh,rpm,rpm_max,gear,throttle,brake,abs,tcs,progress,position_current,position_total
-0.00,55.00,1883,6000,2,0.30,0,0,0,0.0000,5,12
-0.10,56.20,1940,6000,2,0.35,0,0,0,0.0010,5,12
+64800.00,55.00,1883,6000,2,0.30,0,0,0,0.0000,5,12
+64800.10,56.20,1940,6000,2,0.35,0,0,0,0.0010,5,12
 ```
 
 ### 遥测 JSON
@@ -173,6 +183,13 @@ node scripts/convert-obd-log.mjs input.csv output.csv --rate=10
 node scripts/convert-obd-log.mjs input.csv output.csv --position-current=3 --position-total=12
 ```
 
+如果输入的 `SECONDS` 是录制开始后的相对秒数，可以用文件名里的时间或显式 `--start` 把它锚定到本地当天时间：
+
+```bash
+node scripts/convert-obd-log.mjs "2026-04-27 00-19-36.csv" output.csv --relative
+node scripts/convert-obd-log.mjs input.csv output.csv --relative --start="2026-04-27 00:19:36"
+```
+
 未传名次参数时，默认输出 `10 / 12`。
 
 > [!NOTE]
@@ -195,7 +212,9 @@ npm run preview
 node scripts/export-frames.mjs \
   --telemetry /samples/telemetry.csv \
   --track /samples/track.gpx \
-  --duration 120 \
+  --duration 3600 \
+  --range-start 3888000 \
+  --range-end 3891600 \
   --fps 60 \
   --width 1920 \
   --height 1080 \
@@ -203,10 +222,20 @@ node scripts/export-frames.mjs \
   --out out/hud.webm
 ```
 
+`--duration`、`--range-start`、`--range-end` 都使用项目帧编号。导出设置面板会按当前时间轴选区和项目 FPS 自动生成这些值。脚本内部只在驱动浏览器和视频元素时换算成秒。
+
+如果在预览里拖动过时间轴素材轨道，复制面板里的命令会包含：
+
+```bash
+--telemetry-offset 0 --track-offset -63527.041666666664 --video-offset 0
+```
+
+这些 offset 会在导出页面中恢复，确保导出和预览一致。绝对路径输入文件会由导出脚本临时映射成本地 HTTP URL，因此可以直接传 `/Users/.../telemetry.csv` 这类路径。
+
 输出格式：
 
 - `.webm`：VP9 透明视频
-- `.mov` / `.mp4`：ProRes 4444 透明视频
+- `.mov` / `.mp4`：ProRes 4444 透明视频，并写入由 `--range-start` 和 `--fps` 计算出的 timecode
 - 其他扩展名：保留 PNG 序列到 `out/frames`
 
 > [!IMPORTANT]
@@ -217,18 +246,23 @@ node scripts/export-frames.mjs \
 应用支持通过 URL 参数加载数据，便于导出和自动化：
 
 ```text
-/?telemetry=/samples/telemetry.csv&track=/samples/track.gpx&player=ANNA&unit=kmh&t=0
+/?telemetry=/samples/telemetry.csv&track=/samples/track.gpx&player=ANNA&unit=kmh&t=64800
 ```
 
-| 参数           | 说明                                             |
-| -------------- | ------------------------------------------------ |
-| `telemetry`  | 遥测文件 URL                                     |
-| `track`      | GPX 或 GeoJSON 文件 URL                          |
-| `player`     | 玩家名称                                         |
-| `unit`       | `kmh` 或 `mph`                               |
-| `coord`      | 轨迹原始坐标系：`wgs84`、`gcj02` 或 `bd09` |
-| `t`          | 初始时间，单位秒                                 |
-| `exporter=1` | 开启透明导出模式，隐藏控制栏                     |
+| 参数                | 说明                                             |
+| ------------------- | ------------------------------------------------ |
+| `telemetry`         | 遥测文件 URL                                     |
+| `track`             | GPX 或 GeoJSON 文件 URL                          |
+| `player`            | 玩家名称                                         |
+| `unit`              | `kmh` 或 `mph`                                   |
+| `coord`             | 轨迹原始坐标系：`wgs84`、`gcj02` 或 `bd09`       |
+| `t`                 | 初始时间，本地当天零点后的秒数                   |
+| `rangeStart`        | 选区起点，本地当天零点后的秒数                   |
+| `rangeEnd`          | 选区终点，本地当天零点后的秒数                   |
+| `telemetryOffset`   | CSV 轨道 offset，单位秒                          |
+| `trackOffset`       | GPX / GeoJSON 轨道 offset，单位秒                |
+| `videoOffset`       | 视频第 0 帧所在的时间轴位置，单位秒              |
+| `exporter=1`        | 开启透明导出模式，隐藏控制栏                     |
 
 ## 布局编辑
 
