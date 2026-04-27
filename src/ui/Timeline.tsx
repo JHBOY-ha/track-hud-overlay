@@ -17,6 +17,7 @@ const LANE_META: Record<SourceKey, { label: string; color: string }> = {
 
 const HANDLE_HIT_PX = 8;
 const EDGE_HIT_PX = 6;
+const MIN_TRIM_WIDTH = EDGE_HIT_PX * 2 + 4; // lane too narrow for trim edges
 
 interface DragState {
   kind: 'offset' | 'trim-left' | 'trim-right' | 'selection-move' | 'selection-resize-l' | 'selection-resize-r' | 'selection-new' | 'seek';
@@ -158,7 +159,7 @@ export function Timeline() {
       const laneWidth = Math.max(2, tToX(range[1]) - tToX(range[0]));
       const pxInLane = px - laneLeft;
       const [trimS, trimE] = trimOf(k);
-      if (pxInLane < EDGE_HIT_PX) {
+      if (laneWidth >= MIN_TRIM_WIDTH && pxInLane < EDGE_HIT_PX) {
         setDrag({
           kind: 'trim-left',
           source: k,
@@ -171,7 +172,7 @@ export function Timeline() {
         });
         return;
       }
-      if (pxInLane > laneWidth - EDGE_HIT_PX) {
+      if (laneWidth >= MIN_TRIM_WIDTH && pxInLane > laneWidth - EDGE_HIT_PX) {
         setDrag({
           kind: 'trim-right',
           source: k,
@@ -617,9 +618,9 @@ export function Timeline() {
                 const laneLeft = tToX(r[0]);
                 const laneWidth = Math.max(2, tToX(r[1]) - tToX(r[0]));
                 const pxInLane = px - laneLeft;
-                if (pxInLane < EDGE_HIT_PX) {
+                if (laneWidth >= MIN_TRIM_WIDTH && pxInLane < EDGE_HIT_PX) {
                   setEdgeHover({ lane: k, side: 'left' });
-                } else if (pxInLane > laneWidth - EDGE_HIT_PX) {
+                } else if (laneWidth >= MIN_TRIM_WIDTH && pxInLane > laneWidth - EDGE_HIT_PX) {
                   setEdgeHover({ lane: k, side: 'right' });
                 } else {
                   setEdgeHover(null);
@@ -636,7 +637,7 @@ export function Timeline() {
                 borderRadius: 3,
                 opacity: 0.85,
                 cursor:
-                  edgeHover?.lane === k ? 'col-resize' : drag ? undefined : 'ew-resize',
+                  edgeHover?.lane === k && w >= MIN_TRIM_WIDTH ? 'col-resize' : drag ? undefined : 'ew-resize',
                 display: 'flex',
                 alignItems: 'center',
                 paddingLeft: 6,
@@ -651,18 +652,22 @@ export function Timeline() {
               }}
               title={`${meta.label}  ${formatTimecode(r[0], fps)} -> ${formatTimecode(r[1], fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s · 裁剪 ${trimOf(k)[0].toFixed(1)}+${trimOf(k)[1].toFixed(1)}s`}
             >
-              <div style={{
-                position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
-                background: edgeHover?.lane === k && edgeHover.side === 'left'
-                  ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
-                pointerEvents: 'none',
-              }} />
-              <div style={{
-                position: 'absolute', right: 0, top: 0, bottom: 0, width: 3,
-                background: edgeHover?.lane === k && edgeHover.side === 'right'
-                  ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
-                pointerEvents: 'none',
-              }} />
+              {w >= MIN_TRIM_WIDTH && (
+                <div style={{
+                  position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+                  background: edgeHover?.lane === k && edgeHover.side === 'left'
+                    ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
+                  pointerEvents: 'none',
+                }} />
+              )}
+              {w >= MIN_TRIM_WIDTH && (
+                <div style={{
+                  position: 'absolute', right: 0, top: 0, bottom: 0, width: 3,
+                  background: edgeHover?.lane === k && edgeHover.side === 'right'
+                    ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
+                  pointerEvents: 'none',
+                }} />
+              )}
               {meta.label} {formatTimecode(r[0], fps)}
             </div>
           );
