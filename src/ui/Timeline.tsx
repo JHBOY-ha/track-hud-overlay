@@ -305,12 +305,17 @@ export function Timeline() {
             const st = usePlayback.getState();
             st.setTelemetryOffset(0);
             st.setTrackOffset(0);
-            const dataStart =
-              (ranges.telemetry?.[0] ?? Infinity) <= (ranges.track?.[0] ?? Infinity)
-                ? ranges.telemetry?.[0]
-                : ranges.track?.[0];
-            if (dataStart !== undefined) st.setVideoOffset(dataStart);
-            else st.setVideoOffset(0);
+            // Restore embedded SMPTE timecode, or fall back to aligning with the earliest data source.
+            if (st.videoEmbeddedTimecode !== null) {
+              st.setVideoOffset(st.videoEmbeddedTimecode);
+            } else {
+              const postReset = sourceRanges(st);
+              const dataStart =
+                (postReset.telemetry?.[0] ?? Infinity) <= (postReset.track?.[0] ?? Infinity)
+                  ? postReset.telemetry?.[0]
+                  : postReset.track?.[0];
+              st.setVideoOffset(dataStart ?? 0);
+            }
           }}
           disabled={lanes.length === 0}
           style={{

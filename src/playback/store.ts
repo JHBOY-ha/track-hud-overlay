@@ -182,6 +182,8 @@ interface PlaybackState {
   trackOffset: number;
   /** Time-of-day at which video frame 0 plays. */
   videoOffset: number;
+  /** Embedded SMPTE timecode start from the video file, if parsed. */
+  videoEmbeddedTimecode: number | null;
   /** Selected playback range on the absolute axis. null = use full axis. */
   playbackStart: number | null;
   playbackEnd: number | null;
@@ -251,6 +253,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   telemetryOffset: 0,
   trackOffset: 0,
   videoOffset: 0,
+  videoEmbeddedTimecode: null,
   playbackStart: null,
   playbackEnd: null,
   projectDuration: null,
@@ -276,6 +279,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       videoWidth: width,
       videoHeight: height,
       videoOffset: embeddedTimecodeStart ?? dataStart ?? 0,
+      videoEmbeddedTimecode: embeddedTimecodeStart ?? null,
       playing: false,
       playbackStart: null,
       playbackEnd: null,
