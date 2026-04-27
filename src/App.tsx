@@ -12,7 +12,7 @@ import {
   type CoordinateSystem,
 } from './util/coordinateSystems';
 import { PROJECT_FPS_OPTIONS } from './util/timecode';
-import { parseMp4Timecode } from './util/videoTimecode';
+import { parseMp4TimecodeFromBlob } from './util/videoTimecode';
 
 function secondsToFrame(seconds: number, fps: number): number {
   return Math.round(seconds * fps);
@@ -287,7 +287,7 @@ export function App() {
     let embeddedTimecodeStart: number | null = null;
     if (/\.(mp4|mov|m4v)$/i.test(file.name)) {
       try {
-        const timecode = parseMp4Timecode(await file.arrayBuffer());
+        const timecode = await parseMp4TimecodeFromBlob(file);
         if (timecode) {
           embeddedTimecodeStart = timecode.seconds;
           if (PROJECT_FPS_OPTIONS.includes(timecode.fps as any)) {

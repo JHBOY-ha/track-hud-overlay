@@ -155,7 +155,17 @@ export function parseMp4Timecode(buffer: ArrayBuffer): EmbeddedVideoTimecode | n
   const view = new DataView(buffer);
   const moov = topLevelBoxes(view).find(box => box.type === 'moov');
   if (!moov) return null;
+  return parseTimecodeFromMoovView(view, moov, sampleOffset => {
+    if (sampleOffset + 4 > view.byteLength) return null;
+    return view.getInt32(sampleOffset);
+  });
+}
 
+function parseTimecodeFromMoovView(
+  view: DataView,
+  moov: BoxRef,
+  readFrameCount: (sampleOffset: number) => number | null,
+): EmbeddedVideoTimecode | null {
   for (const trak of findDescendants(view, moov, 'trak')) {
     if (handlerType(view, trak) !== 'tmcd') continue;
 
@@ -165,14 +175,84 @@ export function parseMp4Timecode(buffer: ArrayBuffer): EmbeddedVideoTimecode | n
     if (!entry) continue;
 
     const sampleOffset = firstChunkOffset(view, trak);
-    if (sampleOffset === null || sampleOffset + 4 > view.byteLength) continue;
+    if (sampleOffset === null) continue;
 
-    const frameCount = view.getInt32(sampleOffset);
+    const frameCount = readFrameCount(sampleOffset);
+    if (frameCount === null) continue;
     return {
       seconds: frameCount / entry.fps,
       fps: entry.fps,
       frameCount,
     };
+  }
+
+  return null;
+}
+
+async function readBlobSlice(blob: Blob, start: number, length: number): Promise<DataView> {
+  return new DataView(await blob.slice(start, start + length).arrayBuffer());
+}
+
+async function readBlobBox(blob: Blob, offset: number): Promise<BoxRef | null> {
+  if (offset + 8 > blob.size) return null;
+  const head = await readBlobSlice(blob, offset, Math.min(16, blob.size - offset));
+  let size = head.getUint32(0);
+  const type = ascii(head, 4, 4);
+  let headerSize = 8;
+  if (size === 1) {
+    if (head.byteLength < 16) return null;
+    const hi = head.getUint32(8);
+    const lo = head.getUint32(12);
+    size = hi * 2 ** 32 + lo;
+    headerSize = 16;
+  } else if (size === 0) {
+    size = blob.size - offset;
+  }
+  if (size < headerSize || offset + size > blob.size) return null;
+  return {
+    type,
+    start: offset,
+    headerSize,
+    size,
+    contentStart: offset + headerSize,
+    end: offset + size,
+  };
+}
+
+export async function parseMp4TimecodeFromBlob(blob: Blob): Promise<EmbeddedVideoTimecode | null> {
+  let offset = 0;
+  while (offset + 8 <= blob.size) {
+    const box = await readBlobBox(blob, offset);
+    if (!box) break;
+    if (box.type === 'moov') {
+      const moovBuffer = await blob.slice(box.start, box.end).arrayBuffer();
+      const moovView = new DataView(moovBuffer);
+      const moov = readBox(moovView, 0, moovView.byteLength);
+      if (!moov) return null;
+
+      for (const trak of findDescendants(moovView, moov, 'trak')) {
+        if (handlerType(moovView, trak) !== 'tmcd') continue;
+
+        const stsd = findDescendants(moovView, trak, 'stsd')[0];
+        if (!stsd) continue;
+        const entry = parseTmcdSampleEntry(moovView, stsd);
+        if (!entry) continue;
+
+        const sampleOffset = firstChunkOffset(moovView, trak);
+        if (sampleOffset === null || sampleOffset + 4 > blob.size) continue;
+
+        const sampleView = await readBlobSlice(blob, sampleOffset, 4);
+        const frameCount = sampleView.getInt32(0);
+        return {
+          seconds: frameCount / entry.fps,
+          fps: entry.fps,
+          frameCount,
+        };
+      }
+
+      return null;
+    }
+    offset = box.end;
   }
 
   return null;

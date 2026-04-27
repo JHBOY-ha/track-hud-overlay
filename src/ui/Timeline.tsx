@@ -490,7 +490,7 @@ export function Timeline() {
               }}
               title={`${meta.label}  ${formatTimecode(r[0], fps)} -> ${formatTimecode(r[1], fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s`}
             >
-              {meta.label} {formatTimecode(r[1] - r[0], fps)}
+              {meta.label} {formatTimecode(r[0], fps)}
             </div>
           );
         })}

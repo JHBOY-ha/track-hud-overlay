@@ -260,7 +260,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setProjectDuration: d => set({ projectDuration: d !== null && d > 0 ? d : null }),
   setTelemetry: t => {
     set({ telemetry: t, telemetryOffset: 0, playing: false, playbackStart: null, playbackEnd: null });
-    snapPlayheadToAxis(set, get);
+    snapPlayheadToAxis(set, get, { forceStart: true });
   },
   setVideo: (url, aspect, duration, width = 0, height = 0, embeddedTimecodeStart = null) => {
     const prev = get().videoUrl;
@@ -280,7 +280,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       playbackStart: null,
       playbackEnd: null,
     });
-    snapPlayheadToAxis(set, get);
+    snapPlayheadToAxis(set, get, { forceStart: true });
   },
   setTrack: (t, opts) => {
     const resetTimeline = opts?.resetTimeline ?? true;
@@ -290,7 +290,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
         ? { trackOffset: 0, playbackStart: null, playbackEnd: null }
         : null),
     });
-    snapPlayheadToAxis(set, get);
+    snapPlayheadToAxis(set, get, { forceStart: resetTimeline });
   },
   setProfile: p => set(s => ({ profile: { ...s.profile, ...p } })),
   setUnit: u => set({ unit: u }),
@@ -480,9 +480,14 @@ function effectiveRangeFromState(s: PlaybackState): Range {
 function snapPlayheadToAxis(
   set: (partial: Partial<PlaybackState>) => void,
   get: () => PlaybackState,
+  opts: { forceStart?: boolean } = {},
 ) {
   const s = get();
   const [lo, hi] = effectiveRangeFromState(s);
+  if (opts.forceStart) {
+    set({ currentTime: lo });
+    return;
+  }
   if (hi <= lo) {
     set({ currentTime: lo });
     return;

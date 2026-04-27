@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { parseMp4Timecode } from '../src/util/videoTimecode.ts';
+import { parseMp4Timecode, parseMp4TimecodeFromBlob } from '../src/util/videoTimecode.ts';
 
 const enc = new TextEncoder();
 
@@ -94,6 +94,18 @@ test('parseMp4Timecode reads a QuickTime tmcd track start frame', () => {
 test('parseMp4Timecode reads Ronin 4D style QuickTime tmcd entries', () => {
   const frameCount = 19 * 60 * 24 + 46 * 24 + 16;
   const parsed = parseMp4Timecode(makeTmcdMp4(frameCount, 'quicktime').buffer);
+
+  assert.deepEqual(parsed, {
+    seconds: frameCount / 24,
+    fps: 24,
+    frameCount,
+  });
+});
+
+test('parseMp4TimecodeFromBlob reads tmcd without loading the whole file at once', async () => {
+  const frameCount = 19 * 60 * 24 + 46 * 24 + 16;
+  const mp4 = makeTmcdMp4(frameCount, 'quicktime');
+  const parsed = await parseMp4TimecodeFromBlob(new Blob([mp4]));
 
   assert.deepEqual(parsed, {
     seconds: frameCount / 24,
