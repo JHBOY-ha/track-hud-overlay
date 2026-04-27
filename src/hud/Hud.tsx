@@ -38,6 +38,8 @@ export function Hud() {
   const currentTime = usePlayback(s => s.currentTime);
   const telemetryOffset = usePlayback(s => s.telemetryOffset);
   const trackOffset = usePlayback(s => s.trackOffset);
+  const telemetryTrimStart = usePlayback(s => s.telemetryTrimStart);
+  const telemetryTrimEnd = usePlayback(s => s.telemetryTrimEnd);
   const unit = usePlayback(s => s.unit);
   const profile = usePlayback(s => s.profile);
   const rangeStart = usePlayback(s => effectiveRange(s)[0]);
@@ -45,8 +47,11 @@ export function Hud() {
   // Telemetry/track samples are keyed by their intrinsic absolute time;
   // playhead is on the shared axis, so subtract the source's offset.
   const sample = useMemo(
-    () => (telemetry ? sampleAt(telemetry, currentTime - telemetryOffset) : null),
-    [telemetry, currentTime, telemetryOffset],
+    () =>
+      telemetry
+        ? sampleAt(telemetry, currentTime - telemetryOffset, telemetryTrimStart, telemetryTrimEnd)
+        : null,
+    [telemetry, currentTime, telemetryOffset, telemetryTrimStart, telemetryTrimEnd],
   );
   const trackTime = currentTime - trackOffset;
   const elapsed = currentTime - rangeStart;

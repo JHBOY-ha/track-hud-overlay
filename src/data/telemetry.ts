@@ -109,9 +109,17 @@ function lerpOpt(a: number | undefined, b: number | undefined, f: number): numbe
   return lerp(a, b, f);
 }
 
-export function sampleAt(track: TelemetryTrack, t: number): TelemetrySample | null {
+export function sampleAt(
+  track: TelemetryTrack,
+  t: number,
+  trimStart = 0,
+  trimEnd = 0,
+): TelemetrySample | null {
   const { samples } = track;
   if (samples.length === 0) return null;
+  const firstT = samples[0].t + trimStart;
+  const lastT = samples[samples.length - 1].t - trimEnd;
+  if (t < firstT || t > lastT) return null;
   const i = findIndex(samples, t);
   const a = samples[i];
   const b = samples[Math.min(i + 1, samples.length - 1)];

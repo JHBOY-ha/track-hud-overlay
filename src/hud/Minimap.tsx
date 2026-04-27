@@ -94,6 +94,8 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const viewRadiusM = usePlayback(s => s.settings.minimapViewRadiusM);
   const tiltDeg = usePlayback(s => s.settings.minimapTiltDeg);
   const strokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
+  const trackTrimStart = usePlayback(s => s.trackTrimStart);
+  const trackTrimEnd = usePlayback(s => s.trackTrimEnd);
   const mToPx = RADIUS / viewRadiusM;
   const disc = DISC * discScale;
   const [displayMapAngle, setDisplayMapAngle] = useState(0);
@@ -120,6 +122,8 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
     ? poseAt(track, {
         time: hasTrackTime ? currentTime : undefined,
         progress: sample?.progress,
+        trimStart: trackTrimStart,
+        trimEnd: trackTrimEnd,
       })
     : null;
 

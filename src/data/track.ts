@@ -194,11 +194,22 @@ export interface TrackPose {
   ele?: number;
 }
 
-export function poseAt(track: Track, opts: { time?: number; progress?: number }): TrackPose | null {
+export function poseAt(
+  track: Track,
+  opts: { time?: number; progress?: number; trimStart?: number; trimEnd?: number },
+): TrackPose | null {
   const { points } = track;
   if (points.length === 0) return null;
 
   const hasTime = points[0].t !== undefined;
+  const trimStart = opts.trimStart ?? 0;
+  const trimEnd = opts.trimEnd ?? 0;
+
+  if (hasTime && opts.time !== undefined) {
+    const firstT = points[0].t! + trimStart;
+    const lastT = points[points.length - 1].t! - trimEnd;
+    if (opts.time < firstT || opts.time > lastT) return null;
+  }
   let idx = 0;
   let f = 0;
 

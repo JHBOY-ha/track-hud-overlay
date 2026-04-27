@@ -184,6 +184,13 @@ interface PlaybackState {
   videoOffset: number;
   /** Embedded SMPTE timecode start from the video file, if parsed. */
   videoEmbeddedTimecode: number | null;
+  /** Per-source trim (seconds) — clip data from start or end. */
+  telemetryTrimStart: number;
+  telemetryTrimEnd: number;
+  trackTrimStart: number;
+  trackTrimEnd: number;
+  videoTrimStart: number;
+  videoTrimEnd: number;
   /** Selected playback range on the absolute axis. null = use full axis. */
   playbackStart: number | null;
   playbackEnd: number | null;
@@ -227,7 +234,11 @@ interface PlaybackState {
   setTrackOffset(s: number): void;
   setVideoOffset(s: number): void;
   setSelection(start: number | null, end: number | null): void;
+  clearVideo(): void;
+  setSourceTrim(source: SourceKey, start: number, end: number): void;
 }
+
+export type SourceKey = 'track' | 'telemetry' | 'video';
 
 export const usePlayback = create<PlaybackState>((set, get) => ({
   telemetry: null,
@@ -254,6 +265,12 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   trackOffset: 0,
   videoOffset: 0,
   videoEmbeddedTimecode: null,
+  telemetryTrimStart: 0,
+  telemetryTrimEnd: 0,
+  trackTrimStart: 0,
+  trackTrimEnd: 0,
+  videoTrimStart: 0,
+  videoTrimEnd: 0,
   playbackStart: null,
   playbackEnd: null,
   projectDuration: null,
@@ -262,7 +279,15 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   setProjectFps: fps => set({ projectFps: normalizeProjectFps(fps) }),
   setProjectDuration: d => set({ projectDuration: d !== null && d > 0 ? d : null }),
   setTelemetry: t => {
-    set({ telemetry: t, telemetryOffset: 0, playing: false, playbackStart: null, playbackEnd: null });
+    set({
+      telemetry: t,
+      telemetryOffset: 0,
+      telemetryTrimStart: 0,
+      telemetryTrimEnd: 0,
+      playing: false,
+      playbackStart: null,
+      playbackEnd: null,
+    });
     snapPlayheadToAxis(set, get, { forceStart: true });
   },
   setVideo: (url, aspect, duration, width = 0, height = 0, embeddedTimecodeStart = null) => {
@@ -280,6 +305,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
       videoHeight: height,
       videoOffset: embeddedTimecodeStart ?? dataStart ?? 0,
       videoEmbeddedTimecode: embeddedTimecodeStart ?? null,
+      videoTrimStart: 0,
+      videoTrimEnd: 0,
       playing: false,
       playbackStart: null,
       playbackEnd: null,
@@ -291,7 +318,13 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     set({
       track: t,
       ...(resetTimeline
-        ? { trackOffset: 0, playbackStart: null, playbackEnd: null }
+        ? {
+            trackOffset: 0,
+            trackTrimStart: 0,
+            trackTrimEnd: 0,
+            playbackStart: null,
+            playbackEnd: null,
+          }
         : null),
     });
     snapPlayheadToAxis(set, get, { forceStart: resetTimeline });
@@ -335,6 +368,35 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     const s = get();
     const [a, b] = effectiveRangeFromState(s);
     set({ currentTime: clampN(s.currentTime, a, b) });
+  },
+  clearVideo: () => {
+    const prev = get().videoUrl;
+    if (prev) URL.revokeObjectURL(prev);
+    set({
+      videoUrl: null,
+      videoAspect: 16 / 9,
+      videoDuration: 0,
+      videoWidth: 0,
+      videoHeight: 0,
+      videoOffset: 0,
+      videoEmbeddedTimecode: null,
+      videoTrimStart: 0,
+      videoTrimEnd: 0,
+      playing: false,
+      playbackStart: null,
+      playbackEnd: null,
+    });
+    snapPlayheadToAxis(set, get, { forceStart: true });
+  },
+  setSourceTrim: (source, start, end) => {
+    const fields =
+      source === 'telemetry'
+        ? { telemetryTrimStart: start, telemetryTrimEnd: end }
+        : source === 'track'
+          ? { trackTrimStart: start, trackTrimEnd: end }
+          : { videoTrimStart: start, videoTrimEnd: end };
+    set(fields);
+    snapPlayheadToAxis(set, get);
   },
   setRate: r => set({ rate: r }),
   setExporterMode: on => set({ exporterMode: on }),
@@ -448,10 +510,14 @@ export function sourceRanges(s: PlaybackState): {
   const tel = telemetryFirstLast(s.telemetry);
   const trk = trackFirstLast(s.track);
   return {
-    telemetry: tel ? [tel[0] + s.telemetryOffset, tel[1] + s.telemetryOffset] : null,
-    track: trk ? [trk[0] + s.trackOffset, trk[1] + s.trackOffset] : null,
+    telemetry: tel
+      ? [tel[0] + s.telemetryOffset + s.telemetryTrimStart, tel[1] + s.telemetryOffset - s.telemetryTrimEnd]
+      : null,
+    track: trk
+      ? [trk[0] + s.trackOffset + s.trackTrimStart, trk[1] + s.trackOffset - s.trackTrimEnd]
+      : null,
     video: s.videoUrl && s.videoDuration > 0
-      ? [s.videoOffset, s.videoOffset + s.videoDuration]
+      ? [s.videoOffset + s.videoTrimStart, s.videoOffset + s.videoDuration - s.videoTrimEnd]
       : null,
   };
 }

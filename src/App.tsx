@@ -111,6 +111,20 @@ export function App() {
     }
   }, [trackSource, snapToRoads, snapMaxDistM, trackCoordinateSystem]);
 
+  // Sync local state when sources are removed from Timeline
+  useEffect(() => {
+    if (!telemetry) setTelemetryUrl(null);
+  }, [telemetry]);
+
+  useEffect(() => {
+    if (!track) {
+      setTrackUrl(null);
+      setGpxSource(null);
+      setTrackSource(null);
+      parsedTrackSourceRef.current = null;
+    }
+  }, [track]);
+
   useEffect(() => {
     const stored = loadStoredExport();
     if (stored && stored.width > 0 && stored.height > 0) {

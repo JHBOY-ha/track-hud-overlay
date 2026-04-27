@@ -5,10 +5,9 @@ import {
   sourceRanges,
   usePlayback,
   type Range,
+  type SourceKey,
 } from '../playback/store';
 import { formatTimecode, PROJECT_FPS_OPTIONS } from '../util/timecode';
-
-type SourceKey = 'track' | 'telemetry' | 'video';
 
 const LANE_META: Record<SourceKey, { label: string; color: string }> = {
   track: { label: 'GPX', color: '#5fa8ff' },
@@ -17,14 +16,19 @@ const LANE_META: Record<SourceKey, { label: string; color: string }> = {
 };
 
 const HANDLE_HIT_PX = 8;
+const EDGE_HIT_PX = 6;
 
 interface DragState {
-  kind: 'offset' | 'selection-move' | 'selection-resize-l' | 'selection-resize-r' | 'selection-new' | 'seek';
+  kind: 'offset' | 'trim-left' | 'trim-right' | 'selection-move' | 'selection-resize-l' | 'selection-resize-r' | 'selection-new' | 'seek';
   source?: SourceKey;
   startPx: number;
   startTime: number;
+  startClientX: number;
+  startClientY: number;
   // Snapshots
   initialOffset?: number;
+  initialTrimStart?: number;
+  initialTrimEnd?: number;
   initialSelStart?: number | null;
   initialSelEnd?: number | null;
 }
@@ -57,6 +61,13 @@ export function Timeline() {
   const trackOffset = usePlayback(s => s.trackOffset);
   const videoOffset = usePlayback(s => s.videoOffset);
 
+  const telemetryTrimStart = usePlayback(s => s.telemetryTrimStart);
+  const telemetryTrimEnd = usePlayback(s => s.telemetryTrimEnd);
+  const trackTrimStart = usePlayback(s => s.trackTrimStart);
+  const trackTrimEnd = usePlayback(s => s.trackTrimEnd);
+  const videoTrimStart = usePlayback(s => s.videoTrimStart);
+  const videoTrimEnd = usePlayback(s => s.videoTrimEnd);
+
   const ranges = usePlayback(s => sourceRanges(s));
   const [axisStart, axisEnd] = usePlayback(s => axisRange(s));
   const [selStart, selEnd] = usePlayback(s => effectiveRange(s));
@@ -64,6 +75,8 @@ export function Timeline() {
   const trackRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const [selectedLane, setSelectedLane] = useState<SourceKey | null>(null);
+  const [edgeHover, setEdgeHover] = useState<{ lane: SourceKey; side: 'left' | 'right' } | null>(null);
 
   useEffect(() => {
     if (!trackRef.current) return;
@@ -99,6 +112,34 @@ export function Timeline() {
     else st.setVideoOffset(v);
   };
 
+  const deleteLane = (k: SourceKey) => {
+    const st = usePlayback.getState();
+    if (k === 'telemetry') st.setTelemetry(null);
+    else if (k === 'track') st.setTrack(null);
+    else st.clearVideo();
+    setSelectedLane(null);
+  };
+
+  const trimOf = (k: SourceKey): [number, number] => {
+    if (k === 'telemetry') return [telemetryTrimStart, telemetryTrimEnd];
+    if (k === 'track') return [trackTrimStart, trackTrimEnd];
+    return [videoTrimStart, videoTrimEnd];
+  };
+
+  const setTrim = (k: SourceKey, start: number, end: number) => {
+    usePlayback.getState().setSourceTrim(k, start, end);
+  };
+
+  const sourceDuration = (k: SourceKey, ranges: Record<SourceKey, [number, number] | null>): number => {
+    const r = ranges[k];
+    if (!r) return 0;
+    // Remove trim contribution to get the raw (untrimmed) duration
+    const [ts, te] = trimOf(k);
+    const rawStart = r[0] - (k === 'telemetry' ? telemetryOffset : k === 'track' ? trackOffset : videoOffset) - ts;
+    const rawEnd = r[1] - (k === 'telemetry' ? telemetryOffset : k === 'track' ? trackOffset : videoOffset) + te;
+    return Math.max(0, rawEnd - rawStart);
+  };
+
   // Pointer logic ----------------------------------------------------------
   const localX = (e: React.PointerEvent | PointerEvent) => {
     const rect = trackRef.current!.getBoundingClientRect();
@@ -110,11 +151,47 @@ export function Timeline() {
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const px = localX(e);
+    // Detect edge hit for trim vs middle for offset
+    const range = ranges[k];
+    if (range) {
+      const laneLeft = tToX(range[0]);
+      const laneWidth = Math.max(2, tToX(range[1]) - tToX(range[0]));
+      const pxInLane = px - laneLeft;
+      const [trimS, trimE] = trimOf(k);
+      if (pxInLane < EDGE_HIT_PX) {
+        setDrag({
+          kind: 'trim-left',
+          source: k,
+          startPx: px,
+          startTime: xToT(px),
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          initialTrimStart: trimS,
+          initialTrimEnd: trimE,
+        });
+        return;
+      }
+      if (pxInLane > laneWidth - EDGE_HIT_PX) {
+        setDrag({
+          kind: 'trim-right',
+          source: k,
+          startPx: px,
+          startTime: xToT(px),
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          initialTrimStart: trimS,
+          initialTrimEnd: trimE,
+        });
+        return;
+      }
+    }
     setDrag({
       kind: 'offset',
       source: k,
       startPx: px,
       startTime: xToT(px),
+      startClientX: e.clientX,
+      startClientY: e.clientY,
       initialOffset: offsetOf(k),
     });
   };
@@ -131,6 +208,8 @@ export function Timeline() {
         kind: 'selection-resize-l',
         startPx: px,
         startTime: t,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
         initialSelStart: playbackStart,
         initialSelEnd: playbackEnd,
       });
@@ -141,6 +220,8 @@ export function Timeline() {
         kind: 'selection-resize-r',
         startPx: px,
         startTime: t,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
         initialSelStart: playbackStart,
         initialSelEnd: playbackEnd,
       });
@@ -151,18 +232,21 @@ export function Timeline() {
         kind: 'selection-move',
         startPx: px,
         startTime: t,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
         initialSelStart: playbackStart,
         initialSelEnd: playbackEnd,
       });
       return;
     }
     // Empty area: shift starts a brush; plain click seeks.
+    setSelectedLane(null);
     if (e.shiftKey) {
       usePlayback.getState().setSelection(t, t);
-      setDrag({ kind: 'selection-new', startPx: px, startTime: t });
+      setDrag({ kind: 'selection-new', startPx: px, startTime: t, startClientX: e.clientX, startClientY: e.clientY });
     } else {
       usePlayback.getState().seek(t);
-      setDrag({ kind: 'seek', startPx: px, startTime: t });
+      setDrag({ kind: 'seek', startPx: px, startTime: t, startClientX: e.clientX, startClientY: e.clientY });
     }
   };
 
@@ -177,6 +261,17 @@ export function Timeline() {
 
       if (drag.kind === 'offset' && drag.source) {
         setOffset(drag.source, (drag.initialOffset ?? 0) + dt);
+      } else if ((drag.kind === 'trim-left' || drag.kind === 'trim-right') && drag.source) {
+        const k = drag.source;
+        const [curStart, curEnd] = trimOf(k);
+        const dur = sourceDuration(k, ranges);
+        if (drag.kind === 'trim-left') {
+          const newStart = Math.max(0, Math.min(dur - curEnd, (drag.initialTrimStart ?? 0) + dt));
+          setTrim(k, newStart, curEnd);
+        } else {
+          const newEnd = Math.max(0, Math.min(dur - curStart, (drag.initialTrimEnd ?? 0) - dt));
+          setTrim(k, curStart, newEnd);
+        }
       } else if (drag.kind === 'selection-new') {
         const a = drag.startTime;
         const b = t;
@@ -193,7 +288,19 @@ export function Timeline() {
         usePlayback.getState().seek(t);
       }
     };
-    const onUp = () => setDrag(null);
+    const onUp = (e: PointerEvent) => {
+      if ((drag.kind === 'offset' || drag.kind === 'trim-left' || drag.kind === 'trim-right') && drag.source) {
+        const dx = e.clientX - drag.startClientX;
+        const dy = e.clientY - drag.startClientY;
+        if ((dx === 0 || (dx > -3 && dx < 3)) && (dy === 0 || (dy > -3 && dy < 3))) {
+          const src = drag.source;
+          setSelectedLane(prev => (prev === src ? null : src));
+          setDrag(null);
+          return;
+        }
+      }
+      setDrag(null);
+    };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
@@ -203,6 +310,20 @@ export function Timeline() {
       window.removeEventListener('pointercancel', onUp);
     };
   }, [drag, pxPerSec, viewStart]);
+
+  // Delete selected lane on Backspace / Delete
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLane) {
+        e.preventDefault();
+        deleteLane(selectedLane);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [selectedLane]);
 
   // Tick marks -------------------------------------------------------------
   const ticks = useMemo(() => {
@@ -333,6 +454,23 @@ export function Timeline() {
           重置对齐
         </button>
         <button
+          onClick={() => selectedLane && deleteLane(selectedLane)}
+          disabled={!selectedLane}
+          style={{
+            padding: '4px 10px',
+            background: '#333',
+            color: selectedLane ? '#f88' : '#555',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: selectedLane ? 'pointer' : 'default',
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="删除选中的数据源"
+        >
+          删除条带
+        </button>
+        <button
           onClick={() => usePlayback.getState().setSelection(null, null)}
           disabled={!hasSelection}
           style={{
@@ -393,7 +531,7 @@ export function Timeline() {
           设为终点
         </button>
         <span style={{ marginLeft: 'auto', color: '#777', fontSize: 11 }}>
-          拖条带=对齐 · Shift+拖=框选 · 拖端把手=改选区 · 点空白=跳转
+          点=选条带 · Del=删除 · 拖边缘=裁剪 · 拖条带=对齐 · Shift+拖=框选 · 拖端把手=改选区 · 点空白=跳转
         </span>
       </div>
 
@@ -473,6 +611,21 @@ export function Timeline() {
             <div
               key={k}
               onPointerDown={e => onLanePointerDown(e, k)}
+              onPointerMove={e => {
+                if (drag) return;
+                const px = localX(e);
+                const laneLeft = tToX(r[0]);
+                const laneWidth = Math.max(2, tToX(r[1]) - tToX(r[0]));
+                const pxInLane = px - laneLeft;
+                if (pxInLane < EDGE_HIT_PX) {
+                  setEdgeHover({ lane: k, side: 'left' });
+                } else if (pxInLane > laneWidth - EDGE_HIT_PX) {
+                  setEdgeHover({ lane: k, side: 'right' });
+                } else {
+                  setEdgeHover(null);
+                }
+              }}
+              onPointerLeave={() => setEdgeHover(null)}
               style={{
                 position: 'absolute',
                 top,
@@ -482,7 +635,8 @@ export function Timeline() {
                 background: meta.color,
                 borderRadius: 3,
                 opacity: 0.85,
-                cursor: 'ew-resize',
+                cursor:
+                  edgeHover?.lane === k ? 'col-resize' : drag ? undefined : 'ew-resize',
                 display: 'flex',
                 alignItems: 'center',
                 paddingLeft: 6,
@@ -492,9 +646,23 @@ export function Timeline() {
                 whiteSpace: 'nowrap',
                 overflow: 'hidden',
                 boxShadow: drag?.source === k ? '0 0 0 2px #fff inset' : 'none',
+                outline: selectedLane === k ? '2px solid #fff' : 'none',
+                outlineOffset: -2,
               }}
-              title={`${meta.label}  ${formatTimecode(r[0], fps)} -> ${formatTimecode(r[1], fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s`}
+              title={`${meta.label}  ${formatTimecode(r[0], fps)} -> ${formatTimecode(r[1], fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s · 裁剪 ${trimOf(k)[0].toFixed(1)}+${trimOf(k)[1].toFixed(1)}s`}
             >
+              <div style={{
+                position: 'absolute', left: 0, top: 0, bottom: 0, width: 3,
+                background: edgeHover?.lane === k && edgeHover.side === 'left'
+                  ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
+                pointerEvents: 'none',
+              }} />
+              <div style={{
+                position: 'absolute', right: 0, top: 0, bottom: 0, width: 3,
+                background: edgeHover?.lane === k && edgeHover.side === 'right'
+                  ? 'rgba(255,255,255,0.5)' : 'rgba(0,0,0,0.3)',
+                pointerEvents: 'none',
+              }} />
               {meta.label} {formatTimecode(r[0], fps)}
             </div>
           );
