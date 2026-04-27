@@ -149,6 +149,7 @@ export function Timeline() {
 
   const onLanePointerDown = (e: React.PointerEvent, k: SourceKey) => {
     if (!hasAnyData || !pxPerSec) return;
+    e.preventDefault();
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const px = localX(e);
@@ -199,6 +200,7 @@ export function Timeline() {
 
   const onTrackPointerDown = (e: React.PointerEvent) => {
     if (!hasAnyData || !pxPerSec) return;
+    e.preventDefault();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const px = localX(e);
     const t = xToT(px);
@@ -366,6 +368,7 @@ export function Timeline() {
         padding: '8px 16px 12px 16px',
         fontFamily: 'system-ui, sans-serif',
         fontSize: 12,
+        userSelect: 'none',
         display: 'flex',
         flexDirection: 'column',
         gap: 6,
