@@ -195,6 +195,25 @@ node scripts/convert-obd-log.mjs input.csv output.csv --relative --start="2026-0
 > [!NOTE]
 > 如果 OBD 日志里有总行驶距离字段，脚本会自动归一化生成 `progress`。否则 `progress` 会留空，小地图和进度条会依赖轨迹时间或默认值。
 
+### RaceChrono Pro CSV → telemetry + GPX
+
+`scripts/convert-racechrono-csv.mjs` 把 RaceChrono Pro v10 同时录制的 GPS + OBD-II + IMU CSV 转成项目可用的 telemetry CSV，并同步导出一份 GPX 给小地图（同名 `.gpx`，同一段录像的轨迹和遥测自动对齐）。
+
+```bash
+node scripts/convert-racechrono-csv.mjs local/session_xxx.csv \
+  --vehicle="BMW E63 LCI 630i 6AT"
+# → local/session_xxx.hud.csv  (telemetry)
+# → local/session_xxx.gpx      (driven 轨迹)
+```
+
+主要推导逻辑：
+
+- **档位**：用 `local/bmw_e63_lci_630i_6at_porsche_9871_cayman_s_5at_gear_ratios_with_final_drive.csv` 的总传动比 + 原厂轮胎周长，把 `rpm/speed` 拟合到最近的档位。可用 `--vehicle=` 指定车型、`--ratios=` 换表、`--tire=` 改尺寸。
+- **油门**：自动从全程最小开度估出怠速基线（BMW 一般 ~14%），减掉后归一化到 0–1，避免 HUD 上常驻显示踩油门。可用 `--throttle-idle=14` 手动指定，或 `--throttle-idle=auto`（默认）。
+- **刹车**：从 `longitudinal_acc` 做 EMA 平滑（τ≈0.2s）后，按 `0.03G` 起、`0.4G` 满刹映射到 0–1，并用归一化后的油门做门控（`>5%` 油门时刹车强制为 0），保证两者互斥。可调 `--brake-start-g`、`--brake-full-g`、`--brake-smooth-tau`、`--brake-throttle-gate`，或 `--no-brake-from-g` 关闭。
+- **GPX**：从 GPS 行抽取 lat/lon/altitude + Unix 时间戳，去掉相邻重复点，写为 GPX 1.1 `<trk>`。`--gpx=path` 自定义路径，`--no-gpx` 关闭。
+- **速度源**：默认 `--speed-source=gps`，可改 `obd` 或 `calc`。
+
 ## 导出透明 HUD
 
 导出脚本会用 Puppeteer 驱动浏览器逐帧截图，再用 FFmpeg 合成为视频。

@@ -41,6 +41,7 @@ const opts = {
   brakeThrottleGate: 0.05,
   brakeSmoothTau: 0.2,
   throttleIdle: 'auto', // 'auto' = use observed min, or a numeric % baseline
+  gpx: 'auto', // 'auto' writes <input>.gpx alongside; pass a path or 'off' to disable
 };
 for (const a of args) {
   if (a.startsWith('--vehicle=')) opts.vehicle = a.slice(10);
@@ -61,6 +62,8 @@ for (const a of args) {
     const v = a.slice(16);
     opts.throttleIdle = v === 'auto' ? 'auto' : Number(v);
   }
+  else if (a.startsWith('--gpx=')) opts.gpx = a.slice(6);
+  else if (a === '--no-gpx') opts.gpx = 'off';
   else positional.push(a);
 }
 const [inPath, outPathArg] = positional;
@@ -337,4 +340,35 @@ console.error('gear distribution:');
 for (const g of gears) {
   const n = gearHist.get(g.gear) ?? 0;
   console.error(`  G${g.gear}: ${n} (${((n / total) * 100).toFixed(1)}%)`);
+}
+
+// --- GPX track for the minimap (driven layer) ---
+if (opts.gpx !== 'off') {
+  const gpxPath = opts.gpx === 'auto'
+    ? inPath.replace(/\.csv$/i, '') + '.gpx'
+    : opts.gpx;
+  const esc = (s) => String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+  const trkpts = [];
+  let lastLat, lastLon;
+  for (const e of events) {
+    if (e.lat === undefined || e.lon === undefined) continue;
+    if (e.lat === lastLat && e.lon === lastLon) continue;
+    lastLat = e.lat; lastLon = e.lon;
+    const parts = [`<trkpt lat="${e.lat}" lon="${e.lon}">`];
+    if (e.altitude !== undefined) parts.push(`<ele>${e.altitude}</ele>`);
+    if (e.ts !== undefined) parts.push(`<time>${new Date(e.ts * 1000).toISOString()}</time>`);
+    parts.push('</trkpt>');
+    trkpts.push('      ' + parts.join(''));
+  }
+  const trackName = path.basename(inPath, path.extname(inPath));
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="hud5" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk><name>${esc(trackName)}</name><trkseg>
+${trkpts.join('\n')}
+  </trkseg></trk>
+</gpx>
+`;
+  fs.mkdirSync(path.dirname(path.resolve(gpxPath)), { recursive: true });
+  fs.writeFileSync(gpxPath, gpx);
+  console.error(`wrote: ${gpxPath}  (${trkpts.length} trkpts)`);
 }
