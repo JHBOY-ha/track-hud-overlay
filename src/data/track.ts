@@ -251,7 +251,18 @@ export function poseAt(
   const b = points[Math.min(idx + 1, points.length - 1)];
   const x = a.x + (b.x - a.x) * f;
   const y = a.y + (b.y - a.y) * f;
-  const heading = Math.atan2(b.x - a.x, -(b.y - a.y)); // 0 = north, clockwise
+  // Heading uses a wider baseline (~HEADING_BASELINE_M ahead/behind current
+  // position) so dense, noisy GPS sampling doesn't make the rotation step
+  // segment-by-segment on large-radius sweepers.
+  const HEADING_BASELINE_M = 8;
+  const curDist = a.distance + (b.distance - a.distance) * f;
+  let bi = idx + 1;
+  while (bi < points.length - 1 && points[bi].distance - curDist < HEADING_BASELINE_M) bi++;
+  let ai = idx;
+  while (ai > 0 && curDist - points[ai].distance < HEADING_BASELINE_M) ai--;
+  const front = points[bi];
+  const back = points[ai];
+  const heading = Math.atan2(front.x - back.x, -(front.y - back.y)); // 0 = north, CW
   const ele =
     a.ele !== undefined && b.ele !== undefined
       ? a.ele + (b.ele - a.ele) * f

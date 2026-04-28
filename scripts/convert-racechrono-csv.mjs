@@ -35,6 +35,12 @@ const opts = {
   positionTotal: 12,
   rate: null,
   speedSource: 'gps',
+  brakeFromG: true,
+  brakeStartG: 0.03,
+  brakeFullG: 0.4,
+  brakeThrottleGate: 0.05,
+  brakeSmoothTau: 0.2,
+  throttleIdle: 'auto', // 'auto' = use observed min, or a numeric % baseline
 };
 for (const a of args) {
   if (a.startsWith('--vehicle=')) opts.vehicle = a.slice(10);
@@ -46,6 +52,15 @@ for (const a of args) {
   else if (a.startsWith('--position-total=')) opts.positionTotal = Number(a.slice(17));
   else if (a.startsWith('--rate=')) opts.rate = Number(a.slice(7));
   else if (a.startsWith('--speed-source=')) opts.speedSource = a.slice(15);
+  else if (a === '--no-brake-from-g') opts.brakeFromG = false;
+  else if (a.startsWith('--brake-start-g=')) opts.brakeStartG = Number(a.slice(16));
+  else if (a.startsWith('--brake-full-g=')) opts.brakeFullG = Number(a.slice(15));
+  else if (a.startsWith('--brake-throttle-gate=')) opts.brakeThrottleGate = Number(a.slice(22));
+  else if (a.startsWith('--brake-smooth-tau=')) opts.brakeSmoothTau = Number(a.slice(19));
+  else if (a.startsWith('--throttle-idle=')) {
+    const v = a.slice(16);
+    opts.throttleIdle = v === 'auto' ? 'auto' : Number(v);
+  }
   else positional.push(a);
 }
 const [inPath, outPathArg] = positional;
@@ -112,6 +127,7 @@ function parseRaceChrono(text, speedSource) {
     speedCalc: find('speed', 'calc'),
     rpm: find('rpm'),
     throttle: find('accelerator_pos'),
+    longAcc: find('longitudinal_acc'),
   };
   const speedCol = cols[`speed${speedSource[0].toUpperCase()}${speedSource.slice(1)}`];
   if (speedCol == null || speedCol < 0) throw new Error(`speed source "${speedSource}" not found`);
@@ -141,6 +157,7 @@ function parseRaceChrono(text, speedSource) {
       lon: num(f[cols.lon]),
       altitude: num(f[cols.altitude]),
       bearing: num(f[cols.bearing]),
+      long_g: num(f[cols.longAcc]),
     });
   }
   return events;
@@ -176,13 +193,20 @@ const text = fs.readFileSync(inPath, 'utf8');
 const events = parseRaceChrono(text, opts.speedSource);
 console.error(`events:  ${events.length}`);
 
-// First pass: max distance for progress normalization, max rpm for rpm_max.
+// First pass: max distance for progress normalization, max rpm for rpm_max,
+// min throttle for idle-baseline subtraction.
 let distanceMax = 0;
 let rpmMaxObserved = 0;
+let throttleMinObserved = Infinity;
 for (const e of events) {
   if (Number.isFinite(e.distance_m) && e.distance_m > distanceMax) distanceMax = e.distance_m;
   if (Number.isFinite(e.rpm) && e.rpm > rpmMaxObserved) rpmMaxObserved = e.rpm;
+  if (Number.isFinite(e.throttle_pct) && e.throttle_pct < throttleMinObserved) throttleMinObserved = e.throttle_pct;
 }
+const throttleIdlePct = opts.throttleIdle === 'auto'
+  ? (Number.isFinite(throttleMinObserved) ? Math.max(0, Math.min(40, throttleMinObserved)) : 0)
+  : opts.throttleIdle;
+console.error(`throttle idle: ${throttleIdlePct.toFixed(1)}% (observed min ${Number.isFinite(throttleMinObserved) ? throttleMinObserved.toFixed(1) : 'n/a'}%)`);
 const rpmMax = Math.max(6000, Math.ceil((rpmMaxObserved + 200) / 500) * 500);
 
 // Time base: prefer Unix timestamp (wall-clock) so downstream timecode
@@ -231,6 +255,8 @@ const state = {};
 let evtIdx = 0;
 const estimateGear = makeGearEstimator(gears, circumference, opts);
 const gearHist = new Map();
+let longGEma; // smoothed longitudinal G (negative = decel)
+let lastT;
 const fmt = (v, d = 4) => (Number.isFinite(v) ? Number(v).toFixed(d) : '');
 
 const headerCols = [
@@ -250,15 +276,32 @@ for (const t of sampleTimes) {
     if (e.lon !== undefined) state.lon = e.lon;
     if (e.altitude !== undefined) state.altitude = e.altitude;
     if (e.bearing !== undefined) state.bearing = e.bearing;
+    if (e.long_g !== undefined) state.long_g = e.long_g;
   }
   if (state.speed_mps === undefined) continue;
 
   const speedKmh = state.speed_mps * 3.6;
   const rpm = state.rpm;
   const throttle = state.throttle_pct !== undefined
-    ? Math.max(0, Math.min(1, state.throttle_pct / 100))
+    ? Math.max(0, Math.min(1, (state.throttle_pct - throttleIdlePct) / Math.max(1, 100 - throttleIdlePct)))
     : undefined;
   const gear = estimateGear(speedKmh, rpm);
+
+  let brake = '';
+  if (opts.brakeFromG && Number.isFinite(state.long_g)) {
+    const dt = lastT === undefined ? 0 : Math.max(0, t - lastT);
+    const alpha = opts.brakeSmoothTau > 0 ? 1 - Math.exp(-dt / opts.brakeSmoothTau) : 1;
+    longGEma = longGEma === undefined ? state.long_g : longGEma + alpha * (state.long_g - longGEma);
+    const decel = -longGEma; // positive when braking
+    const throttleOk = throttle === undefined || throttle <= opts.brakeThrottleGate;
+    if (throttleOk && decel > opts.brakeStartG) {
+      const span = Math.max(1e-6, opts.brakeFullG - opts.brakeStartG);
+      brake = Math.max(0, Math.min(1, (decel - opts.brakeStartG) / span)).toFixed(3);
+    } else {
+      brake = '0.000';
+    }
+  }
+  lastT = t;
   if (gear !== '') gearHist.set(gear, (gearHist.get(gear) ?? 0) + 1);
   const progress = distanceMax > 0 && state.distance_m !== undefined
     ? Math.max(0, Math.min(1, state.distance_m / distanceMax))
@@ -271,7 +314,7 @@ for (const t of sampleTimes) {
     rpmMax,
     gear,
     throttle !== undefined ? throttle.toFixed(3) : '',
-    '', // brake — not exposed by RaceChrono OBD
+    brake,
     '', // abs
     '', // tcs
     progress !== undefined ? progress.toFixed(4) : '',
