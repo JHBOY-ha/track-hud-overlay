@@ -43,7 +43,7 @@ export interface HudSettings {
 export const DEFAULT_SETTINGS: HudSettings = {
   trackCoordinateSystem: 'wgs84',
   snapToRoads: true,
-  snapMaxDistM: 5,
+  snapMaxDistM: 10,
   minimapViewRadiusM: 50,
   minimapTiltDeg: 70,
   minimapStrokeWidth: 10,

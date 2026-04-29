@@ -253,6 +253,14 @@ node scripts/export-frames.mjs \
 
 这些 offset 会在导出页面中恢复，确保导出和预览一致。绝对路径输入文件会由导出脚本临时映射成本地 HTTP URL，因此可以直接传 `/Users/.../telemetry.csv` 这类路径。
 
+高级 HUD 设置（路网吸附、Minimap 半径/俯视角/线宽）通常存于浏览器 `localStorage`，由于导出 Puppeteer 实例是干净上下文，导出命令会显式带上：
+
+```bash
+--snap-to-roads 1 --snap-max-dist 5 --minimap-radius 50 --minimap-tilt 70 --minimap-stroke 10
+```
+
+复制面板里的命令会自动按当前设置填好这些参数。
+
 输出格式：
 
 - `.webm`：VP9 透明视频
@@ -285,6 +293,11 @@ node scripts/export-frames.mjs \
 | `telemetryOffset`   | CSV 轨道 offset，单位秒                          |
 | `trackOffset`       | GPX / GeoJSON 轨道 offset，单位秒                |
 | `videoOffset`       | 视频第 0 帧所在的时间轴位置，单位秒              |
+| `snapToRoads`       | 路网吸附开关，`1` 或 `0`                         |
+| `snapMaxDistM`      | 吸附最大距离，米                                 |
+| `minimapViewRadiusM`| Minimap 可视半径，米                             |
+| `minimapTiltDeg`    | Minimap 俯视角，度                               |
+| `minimapStrokeWidth`| Minimap 道路线宽，px                             |
 | `exporter=1`        | 开启透明导出模式，隐藏控制栏                     |
 
 ## 布局编辑

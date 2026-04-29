@@ -40,6 +40,39 @@ test('export command carries progress range for preview parity', () => {
   assert.match(exportFramesSource, /url\.searchParams\.set\('progressEnd', String\(PROGRESS_END\)\)/);
 });
 
+test('export command carries advanced HUD settings', () => {
+  assert.match(source, /const snapToRoads = usePlayback\(s => s\.settings\.snapToRoads\);/);
+  assert.match(source, /const snapMaxDistM = usePlayback\(s => s\.settings\.snapMaxDistM\);/);
+  assert.match(source, /const minimapViewRadiusM = usePlayback\(s => s\.settings\.minimapViewRadiusM\);/);
+  assert.match(source, /const minimapTiltDeg = usePlayback\(s => s\.settings\.minimapTiltDeg\);/);
+  assert.match(source, /const minimapStrokeWidth = usePlayback\(s => s\.settings\.minimapStrokeWidth\);/);
+  assert.match(source, /'--snap-to-roads', snapToRoads \? '1' : '0'/);
+  assert.match(source, /'--snap-max-dist', String\(snapMaxDistM\)/);
+  assert.match(source, /'--minimap-radius', String\(minimapViewRadiusM\)/);
+  assert.match(source, /'--minimap-tilt', String\(minimapTiltDeg\)/);
+  assert.match(source, /'--minimap-stroke', String\(minimapStrokeWidth\)/);
+  assert.match(source, /q\.get\('snapToRoads'\)/);
+  assert.match(source, /q\.get\('snapMaxDistM'\)/);
+  assert.match(source, /q\.get\('minimapViewRadiusM'\)/);
+  assert.match(source, /q\.get\('minimapTiltDeg'\)/);
+  assert.match(source, /q\.get\('minimapStrokeWidth'\)/);
+  assert.match(source, /setSetting\('snapToRoads',/);
+  assert.match(source, /setSetting\('snapMaxDistM',/);
+  assert.match(source, /setSetting\('minimapViewRadiusM',/);
+  assert.match(source, /setSetting\('minimapTiltDeg',/);
+  assert.match(source, /setSetting\('minimapStrokeWidth',/);
+  assert.match(exportFramesSource, /SNAP_TO_ROADS = arg\('snap-to-roads', null\)/);
+  assert.match(exportFramesSource, /SNAP_MAX_DIST = arg\('snap-max-dist', null\)/);
+  assert.match(exportFramesSource, /MINIMAP_RADIUS = arg\('minimap-radius', null\)/);
+  assert.match(exportFramesSource, /MINIMAP_TILT = arg\('minimap-tilt', null\)/);
+  assert.match(exportFramesSource, /MINIMAP_STROKE = arg\('minimap-stroke', null\)/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('snapToRoads',/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('snapMaxDistM',/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapViewRadiusM',/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapTiltDeg',/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapStrokeWidth',/);
+});
+
 test('enriched output track files use /output export URLs', () => {
   assert.equal(
     exportUrlForDroppedFileName('activity_256997965_enriched.geojson', 'track'),

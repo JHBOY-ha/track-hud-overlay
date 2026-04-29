@@ -17,6 +17,7 @@
 //   2) ffmpeg in PATH (only if writing .webm/.mp4)
 
 import { createReadStream, mkdirSync, existsSync, rmSync, statSync } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { basename, resolve, dirname, extname, isAbsolute } from 'node:path';
@@ -180,6 +181,11 @@ export async function main() {
   const VIDEO_OFFSET = Number(arg('video-offset', '0'));
   const PROGRESS_START = Number(arg('progress-start', 'NaN'));
   const PROGRESS_END = Number(arg('progress-end', 'NaN'));
+  const SNAP_TO_ROADS = arg('snap-to-roads', null);
+  const SNAP_MAX_DIST = arg('snap-max-dist', null);
+  const MINIMAP_RADIUS = arg('minimap-radius', null);
+  const MINIMAP_TILT = arg('minimap-tilt', null);
+  const MINIMAP_STROKE = arg('minimap-stroke', null);
   const OUT = arg('out', 'out/hud.webm');
 
   const localFiles = [RAW_TELEMETRY, RAW_TRACK].filter(isLocalFileArg);
@@ -207,9 +213,17 @@ export async function main() {
 
   const previewProcess = await ensurePreviewServer(BASE);
   try {
-    const framesDir = resolve(ROOT, 'out', 'frames');
-    if (existsSync(framesDir)) rmSync(framesDir, { recursive: true });
-    mkdirSync(framesDir, { recursive: true });
+    const outPath = resolve(ROOT, OUT);
+    mkdirSync(dirname(outPath), { recursive: true });
+    const ext = extname(outPath).toLowerCase();
+    const pipeToFfmpeg = ext === '.webm' || ext === '.mov' || ext === '.mp4';
+
+    let framesDir = null;
+    if (!pipeToFfmpeg) {
+      framesDir = resolve(ROOT, 'out', 'frames');
+      if (existsSync(framesDir)) rmSync(framesDir, { recursive: true });
+      mkdirSync(framesDir, { recursive: true });
+    }
 
     const puppeteer = await import('puppeteer').then(m => m.default);
 
@@ -237,6 +251,22 @@ export async function main() {
     if (Number.isFinite(PROGRESS_START) && Number.isFinite(PROGRESS_END) && PROGRESS_END > PROGRESS_START) {
       url.searchParams.set('progressStart', String(PROGRESS_START));
       url.searchParams.set('progressEnd', String(PROGRESS_END));
+    }
+    if (SNAP_TO_ROADS !== null) {
+      const v = String(SNAP_TO_ROADS).trim().toLowerCase();
+      url.searchParams.set('snapToRoads', v === '1' || v === 'true' ? '1' : '0');
+    }
+    if (SNAP_MAX_DIST !== null && Number.isFinite(Number(SNAP_MAX_DIST))) {
+      url.searchParams.set('snapMaxDistM', String(Number(SNAP_MAX_DIST)));
+    }
+    if (MINIMAP_RADIUS !== null && Number.isFinite(Number(MINIMAP_RADIUS))) {
+      url.searchParams.set('minimapViewRadiusM', String(Number(MINIMAP_RADIUS)));
+    }
+    if (MINIMAP_TILT !== null && Number.isFinite(Number(MINIMAP_TILT))) {
+      url.searchParams.set('minimapTiltDeg', String(Number(MINIMAP_TILT)));
+    }
+    if (MINIMAP_STROKE !== null && Number.isFinite(Number(MINIMAP_STROKE))) {
+      url.searchParams.set('minimapStrokeWidth', String(Number(MINIMAP_STROKE)));
     }
 
     console.log(`[export] opening ${url}`);
@@ -272,6 +302,43 @@ export async function main() {
     const totalFrames = Math.max(0, Math.ceil(DURATION_FRAMES));
     const pad = String(totalFrames).length;
 
+    let ffmpeg = null;
+    let ffmpegExit = null;
+    if (pipeToFfmpeg) {
+      const ffmpegArgs = ext === '.webm'
+        ? [
+            '-y',
+            '-f', 'image2pipe',
+            '-c:v', 'png',
+            '-framerate', String(FPS),
+            '-i', '-',
+            '-c:v', 'libvpx-vp9',
+            '-pix_fmt', 'yuva420p',
+            '-b:v', '0',
+            '-crf', '28',
+            outPath,
+          ]
+        : [
+            '-y',
+            '-f', 'image2pipe',
+            '-c:v', 'png',
+            '-framerate', String(FPS),
+            '-i', '-',
+            '-c:v', 'prores_ks',
+            '-profile:v', '4',
+            '-pix_fmt', 'yuva444p10le',
+            '-timecode', outputTimecode,
+            '-metadata', `timecode=${outputTimecode}`,
+            outPath,
+          ];
+      ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'inherit', 'inherit'] });
+      ffmpeg.stdin.on('error', () => {});
+      ffmpegExit = new Promise((res, rej) => {
+        ffmpeg.on('error', rej);
+        ffmpeg.on('exit', code => (code === 0 ? res(null) : rej(new Error(`ffmpeg exited ${code}`))));
+      });
+    }
+
     console.log(`[export] rendering ${totalFrames} frames at ${FPS}fps (${WIDTH}x${HEIGHT})`);
     for (let i = 0; i < totalFrames; i++) {
       const t = i / FPS;
@@ -279,44 +346,28 @@ export async function main() {
         window.seekTo(time);
         await window.readyForFrame();
       }, t);
-      const file = resolve(framesDir, `frame_${String(i).padStart(pad, '0')}.png`);
-      await page.screenshot({ path: file, omitBackground: true, type: 'png' });
+      const buf = await page.screenshot({
+        omitBackground: true,
+        type: 'png',
+        optimizeForSpeed: true,
+      });
+      if (ffmpeg) {
+        if (!ffmpeg.stdin.write(buf)) {
+          await new Promise(r => ffmpeg.stdin.once('drain', r));
+        }
+      } else {
+        const file = resolve(framesDir, `frame_${String(i).padStart(pad, '0')}.png`);
+        await writeFile(file, buf);
+      }
       if (i % FPS === 0) process.stdout.write(`\r[export] frame ${i}/${totalFrames}`);
     }
     process.stdout.write('\n');
 
     await browser.close();
 
-    const outPath = resolve(ROOT, OUT);
-    mkdirSync(dirname(outPath), { recursive: true });
-    const ext = extname(outPath).toLowerCase();
-
-    if (ext === '.webm') {
-      const pattern = resolve(framesDir, `frame_%0${pad}d.png`);
-      await run('ffmpeg', [
-        '-y',
-        '-framerate', String(FPS),
-        '-i', pattern,
-        '-c:v', 'libvpx-vp9',
-        '-pix_fmt', 'yuva420p',
-        '-b:v', '0',
-        '-crf', '28',
-        outPath,
-      ]);
-      console.log(`[export] wrote ${outPath}`);
-    } else if (ext === '.mov' || ext === '.mp4') {
-      const pattern = resolve(framesDir, `frame_%0${pad}d.png`);
-      await run('ffmpeg', [
-        '-y',
-        '-framerate', String(FPS),
-        '-i', pattern,
-        '-c:v', 'prores_ks',
-        '-profile:v', '4',
-        '-pix_fmt', 'yuva444p10le',
-        '-timecode', outputTimecode,
-        '-metadata', `timecode=${outputTimecode}`,
-        outPath,
-      ]);
+    if (ffmpeg) {
+      ffmpeg.stdin.end();
+      await ffmpegExit;
       console.log(`[export] wrote ${outPath}`);
     } else {
       console.log(`[export] frames kept at ${framesDir} (no video muxing for extension ${ext})`);

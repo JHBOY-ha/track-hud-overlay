@@ -152,11 +152,35 @@ export function App() {
     const telemetryOffset = Number(q.get('telemetryOffset') ?? '0');
     const trackOffset = Number(q.get('trackOffset') ?? '0');
     const videoOffset = Number(q.get('videoOffset') ?? '0');
+    const snapToRoadsParam = q.get('snapToRoads');
+    const snapMaxDistMParam = q.get('snapMaxDistM');
+    const minimapViewRadiusMParam = q.get('minimapViewRadiusM');
+    const minimapTiltDegParam = q.get('minimapTiltDeg');
+    const minimapStrokeWidthParam = q.get('minimapStrokeWidth');
 
     if (player) usePlayback.getState().setProfile({ name: player });
     if (u === 'mph' || u === 'kmh') usePlayback.getState().setUnit(u);
     if (isCoordinateSystem(coord)) {
       usePlayback.getState().setSetting('trackCoordinateSystem', coord);
+    }
+    if (snapToRoadsParam === '0' || snapToRoadsParam === '1') {
+      usePlayback.getState().setSetting('snapToRoads', snapToRoadsParam === '1');
+    }
+    if (snapMaxDistMParam !== null) {
+      const v = Number(snapMaxDistMParam);
+      if (Number.isFinite(v) && v >= 0) usePlayback.getState().setSetting('snapMaxDistM', v);
+    }
+    if (minimapViewRadiusMParam !== null) {
+      const v = Number(minimapViewRadiusMParam);
+      if (Number.isFinite(v) && v > 0) usePlayback.getState().setSetting('minimapViewRadiusM', v);
+    }
+    if (minimapTiltDegParam !== null) {
+      const v = Number(minimapTiltDegParam);
+      if (Number.isFinite(v) && v >= 0) usePlayback.getState().setSetting('minimapTiltDeg', v);
+    }
+    if (minimapStrokeWidthParam !== null) {
+      const v = Number(minimapStrokeWidthParam);
+      if (Number.isFinite(v) && v > 0) usePlayback.getState().setSetting('minimapStrokeWidth', v);
     }
     if (exporter) {
       usePlayback.getState().setExporterMode(true);
@@ -895,6 +919,11 @@ function ExportSettingsPanel({
   const [telemetryUrl, setTelemetryUrl] = useState(defaultTelemetryUrl);
   const [trackUrl, setTrackUrl] = useState(defaultTrackUrl);
   const trackCoordinateSystem = usePlayback(s => s.settings.trackCoordinateSystem);
+  const snapToRoads = usePlayback(s => s.settings.snapToRoads);
+  const snapMaxDistM = usePlayback(s => s.settings.snapMaxDistM);
+  const minimapViewRadiusM = usePlayback(s => s.settings.minimapViewRadiusM);
+  const minimapTiltDeg = usePlayback(s => s.settings.minimapTiltDeg);
+  const minimapStrokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
 
   useEffect(() => {
     setTelemetryUrl(defaultTelemetryUrl);
@@ -931,6 +960,11 @@ function ExportSettingsPanel({
       '--telemetry-offset', String(telemetryOffset),
       '--track-offset', String(trackOffset),
       '--video-offset', String(videoOffset),
+      '--snap-to-roads', snapToRoads ? '1' : '0',
+      '--snap-max-dist', String(snapMaxDistM),
+      '--minimap-radius', String(minimapViewRadiusM),
+      '--minimap-tilt', String(minimapTiltDeg),
+      '--minimap-stroke', String(minimapStrokeWidth),
       ...(progressStart !== null && progressEnd !== null && progressEnd > progressStart
         ? ['--progress-start', String(progressStart), '--progress-end', String(progressEnd)]
         : []),
@@ -955,6 +989,11 @@ function ExportSettingsPanel({
     telemetryOffset,
     trackOffset,
     videoOffset,
+    snapToRoads,
+    snapMaxDistM,
+    minimapViewRadiusM,
+    minimapTiltDeg,
+    minimapStrokeWidth,
     progressStart,
     progressEnd,
     outPath,
