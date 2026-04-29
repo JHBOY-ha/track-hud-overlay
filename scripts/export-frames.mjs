@@ -7,6 +7,7 @@
 //     --telemetry /samples/telemetry.csv \
 //     --track /samples/track.gpx \
 //     --duration 120 --range-start 0 --range-end 120 --fps 60 \
+//     --progress-start 0 --progress-end 120 \
 //     --width 1920 --height 1080 \
 //     --coord wgs84 \
 //     --out out/hud.webm
@@ -177,6 +178,8 @@ export async function main() {
   const TELEMETRY_OFFSET = Number(arg('telemetry-offset', '0'));
   const TRACK_OFFSET = Number(arg('track-offset', '0'));
   const VIDEO_OFFSET = Number(arg('video-offset', '0'));
+  const PROGRESS_START = Number(arg('progress-start', 'NaN'));
+  const PROGRESS_END = Number(arg('progress-end', 'NaN'));
   const OUT = arg('out', 'out/hud.webm');
 
   const localFiles = [RAW_TELEMETRY, RAW_TRACK].filter(isLocalFileArg);
@@ -230,6 +233,10 @@ export async function main() {
       url.searchParams.set('rangeStart', String(RANGE_START));
       url.searchParams.set('rangeEnd', String(RANGE_END));
       url.searchParams.set('t', String(RANGE_START));
+    }
+    if (Number.isFinite(PROGRESS_START) && Number.isFinite(PROGRESS_END) && PROGRESS_END > PROGRESS_START) {
+      url.searchParams.set('progressStart', String(PROGRESS_START));
+      url.searchParams.set('progressEnd', String(PROGRESS_END));
     }
 
     console.log(`[export] opening ${url}`);

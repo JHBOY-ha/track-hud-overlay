@@ -147,6 +147,8 @@ export function App() {
     const t0 = Number(q.get('t') ?? '0');
     const rangeStart = Number(q.get('rangeStart'));
     const rangeEnd = Number(q.get('rangeEnd'));
+    const progressStart = Number(q.get('progressStart'));
+    const progressEnd = Number(q.get('progressEnd'));
     const telemetryOffset = Number(q.get('telemetryOffset') ?? '0');
     const trackOffset = Number(q.get('trackOffset') ?? '0');
     const videoOffset = Number(q.get('videoOffset') ?? '0');
@@ -194,6 +196,10 @@ export function App() {
         }
         if (Number.isFinite(rangeStart) && Number.isFinite(rangeEnd)) {
           usePlayback.getState().setSelection(rangeStart, rangeEnd);
+        }
+        if (Number.isFinite(progressStart) && Number.isFinite(progressEnd) && progressEnd > progressStart) {
+          usePlayback.getState().setProgressStart(progressStart);
+          usePlayback.getState().setProgressEnd(progressEnd);
         }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
       } catch (e) {
@@ -863,6 +869,8 @@ function ExportSettingsPanel({
   const telemetryOffset = usePlayback(s => s.telemetryOffset);
   const trackOffset = usePlayback(s => s.trackOffset);
   const videoOffset = usePlayback(s => s.videoOffset);
+  const progressStart = usePlayback(s => s.progressStart);
+  const progressEnd = usePlayback(s => s.progressEnd);
   const [rangeStart, rangeEnd] = usePlayback(s => effectiveRange(s));
   const duration = Math.max(0, rangeEnd - rangeStart);
   const rangeStartFrame = secondsToFrame(rangeStart, fps);
@@ -923,6 +931,9 @@ function ExportSettingsPanel({
       '--telemetry-offset', String(telemetryOffset),
       '--track-offset', String(trackOffset),
       '--video-offset', String(videoOffset),
+      ...(progressStart !== null && progressEnd !== null && progressEnd > progressStart
+        ? ['--progress-start', String(progressStart), '--progress-end', String(progressEnd)]
+        : []),
       '--out', outPath,
     ];
     return args.map(shellQuote).join(' ');
@@ -944,6 +955,8 @@ function ExportSettingsPanel({
     telemetryOffset,
     trackOffset,
     videoOffset,
+    progressStart,
+    progressEnd,
     outPath,
   ]);
 

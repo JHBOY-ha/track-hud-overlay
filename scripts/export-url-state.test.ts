@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { exportUrlForDroppedFileName } from '../src/util/exportUrls.ts';
 
 const source = readFileSync(new URL('../src/App.tsx', import.meta.url), 'utf8');
+const exportFramesSource = readFileSync(new URL('./export-frames.mjs', import.meta.url), 'utf8');
 
 test('local dropped files are not presented as /samples export URLs', () => {
   assert.doesNotMatch(source, /setTelemetryUrl\(`\/samples\/\$\{file\.name\}`\)/);
@@ -22,6 +23,21 @@ test('export command carries timeline source offsets', () => {
   assert.match(source, /q\.get\('telemetryOffset'\)/);
   assert.match(source, /q\.get\('trackOffset'\)/);
   assert.match(source, /q\.get\('videoOffset'\)/);
+});
+
+test('export command carries progress range for preview parity', () => {
+  assert.match(source, /const progressStart = usePlayback\(s => s\.progressStart\);/);
+  assert.match(source, /const progressEnd = usePlayback\(s => s\.progressEnd\);/);
+  assert.match(source, /'--progress-start', String\(progressStart\)/);
+  assert.match(source, /'--progress-end', String\(progressEnd\)/);
+  assert.match(source, /q\.get\('progressStart'\)/);
+  assert.match(source, /q\.get\('progressEnd'\)/);
+  assert.match(source, /setProgressStart\(progressStart\)/);
+  assert.match(source, /setProgressEnd\(progressEnd\)/);
+  assert.match(exportFramesSource, /PROGRESS_START = Number\(arg\('progress-start', 'NaN'\)\)/);
+  assert.match(exportFramesSource, /PROGRESS_END = Number\(arg\('progress-end', 'NaN'\)\)/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('progressStart', String\(PROGRESS_START\)\)/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('progressEnd', String\(PROGRESS_END\)\)/);
 });
 
 test('enriched output track files use /output export URLs', () => {

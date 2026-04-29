@@ -234,6 +234,8 @@ node scripts/export-frames.mjs \
   --duration 3600 \
   --range-start 3888000 \
   --range-end 3891600 \
+  --progress-start 64800 \
+  --progress-end 64860 \
   --fps 60 \
   --width 1920 \
   --height 1080 \
@@ -241,7 +243,7 @@ node scripts/export-frames.mjs \
   --out out/hud.webm
 ```
 
-`--duration`、`--range-start`、`--range-end` 都使用项目帧编号。导出设置面板会按当前时间轴选区和项目 FPS 自动生成这些值。脚本内部只在驱动浏览器和视频元素时换算成秒。
+`--duration`、`--range-start`、`--range-end` 都使用项目帧编号。导出设置面板会按当前时间轴选区和项目 FPS 自动生成这些值。`--progress-start`、`--progress-end` 使用时间轴秒数，用于恢复 HUD 进度条/Elapsed 的起终点。脚本内部只在驱动浏览器和视频元素时换算帧选区。
 
 如果在预览里拖动过时间轴素材轨道，复制面板里的命令会包含：
 
@@ -278,6 +280,8 @@ node scripts/export-frames.mjs \
 | `t`                 | 初始时间，本地当天零点后的秒数                   |
 | `rangeStart`        | 选区起点，本地当天零点后的秒数                   |
 | `rangeEnd`          | 选区终点，本地当天零点后的秒数                   |
+| `progressStart`     | HUD 进度起点，本地当天零点后的秒数               |
+| `progressEnd`       | HUD 进度终点，本地当天零点后的秒数               |
 | `telemetryOffset`   | CSV 轨道 offset，单位秒                          |
 | `trackOffset`       | GPX / GeoJSON 轨道 offset，单位秒                |
 | `videoOffset`       | 视频第 0 帧所在的时间轴位置，单位秒              |
