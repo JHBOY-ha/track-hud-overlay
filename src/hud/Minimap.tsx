@@ -46,6 +46,59 @@ function pickScaleBarMeters(mToPx: number): number {
   return best;
 }
 
+/** Return a copy of `layer` with points clipped to the local-time window
+ *  [t0, t1]. Endpoints are linearly interpolated. Returns the input unchanged
+ *  if the layer has no per-point time data. */
+function clampLayerByTime(
+  layer: TrackLayer,
+  t0: number,
+  t1: number,
+): TrackLayer {
+  const pts = layer.points;
+  if (pts.length < 2 || pts[0].t === undefined) return layer;
+  const first = pts[0].t!;
+  const last = pts[pts.length - 1].t!;
+  const lo = Math.max(t0, first);
+  const hi = Math.min(t1, last);
+  if (hi <= lo) return { ...layer, points: [], totalLength: 0 };
+
+  const interp = (a: TrackPoint, b: TrackPoint, t: number): TrackPoint => {
+    const f = (t - (a.t ?? 0)) / (((b.t ?? 0) - (a.t ?? 0)) || 1);
+    return {
+      x: a.x + (b.x - a.x) * f,
+      y: a.y + (b.y - a.y) * f,
+      distance: a.distance + (b.distance - a.distance) * f,
+      t,
+      ele:
+        a.ele !== undefined && b.ele !== undefined
+          ? a.ele + (b.ele - a.ele) * f
+          : (a.ele ?? b.ele),
+    };
+  };
+
+  const findSeg = (target: number): number => {
+    let l = 0, h = pts.length - 1;
+    while (h - l > 1) {
+      const m = (l + h) >> 1;
+      if ((pts[m].t ?? 0) <= target) l = m;
+      else h = m;
+    }
+    return l;
+  };
+
+  const iLo = findSeg(lo);
+  const iHi = findSeg(hi);
+  const start = interp(pts[iLo], pts[iLo + 1], lo);
+  const end = interp(pts[iHi], pts[iHi + 1], hi);
+  const middle = pts.slice(iLo + 1, iHi + 1);
+  const sliced: TrackPoint[] = [start, ...middle, end];
+  let total = 0;
+  for (let i = 1; i < sliced.length; i++) {
+    total += Math.hypot(sliced[i].x - sliced[i - 1].x, sliced[i].y - sliced[i - 1].y);
+  }
+  return { ...layer, points: sliced, totalLength: total };
+}
+
 function splitLayerAtTarget(
   layer: TrackLayer,
   currentTime: number,
@@ -96,6 +149,9 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
   const strokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
   const trackTrimStart = usePlayback(s => s.trackTrimStart);
   const trackTrimEnd = usePlayback(s => s.trackTrimEnd);
+  const trackOffset = usePlayback(s => s.trackOffset);
+  const progressStart = usePlayback(s => s.progressStart);
+  const progressEnd = usePlayback(s => s.progressEnd);
   const mToPx = RADIUS / viewRadiusM;
   const disc = DISC * discScale;
   const [displayMapAngle, setDisplayMapAngle] = useState(0);
@@ -137,7 +193,18 @@ export function Minimap({ track, sample, currentTime, playerName }: Props) {
       })
       .join(' ');
 
-  const layers = track?.layers ?? [];
+  const allLayers = track?.layers ?? [];
+  const hasProgressRange =
+    progressStart !== null && progressEnd !== null && progressEnd > progressStart;
+  const clipLayer = (l: TrackLayer): TrackLayer =>
+    hasProgressRange
+      ? clampLayerByTime(
+          l,
+          (progressStart as number) - trackOffset,
+          (progressEnd as number) - trackOffset,
+        )
+      : l;
+  const layers = allLayers.map(l => (l.kind === 'reference' ? l : clipLayer(l)));
   const referenceLayers = layers.filter(l => l.kind === 'reference');
   const plannedLayer = layers.find(l => l.kind === 'planned');
   const drivenLayer = layers.find(l => l.kind === 'driven') ?? plannedLayer;

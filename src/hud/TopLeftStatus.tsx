@@ -1,5 +1,27 @@
-import type { TelemetrySample } from '../data/schema';
+import type { TelemetrySample, TrackPoint } from '../data/schema';
 import { Draggable } from './Draggable';
+import { usePlayback } from '../playback/store';
+
+/** Cumulative distance along the primary track at absolute time `t`.
+ *  Returns null if the track has no time-tagged points or `t` is outside. */
+function distanceAtTime(points: TrackPoint[], trackOffset: number, t: number): number | null {
+  if (points.length === 0 || points[0].t === undefined) return null;
+  const local = t - trackOffset;
+  const first = points[0].t!;
+  const last = points[points.length - 1].t ?? first;
+  if (local <= first) return points[0].distance;
+  if (local >= last) return points[points.length - 1].distance;
+  let lo = 0, hi = points.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if ((points[mid].t ?? 0) <= local) lo = mid;
+    else hi = mid;
+  }
+  const a = points[lo];
+  const b = points[lo + 1];
+  const f = (local - (a.t ?? 0)) / (((b.t ?? 0) - (a.t ?? 0)) || 1);
+  return a.distance + (b.distance - a.distance) * f;
+}
 
 interface Props {
   sample: TelemetrySample | null;
@@ -18,7 +40,32 @@ const STRIP_W = 300;
 const TICKS = 10;
 
 export function TopLeftStatus({ sample, currentTime }: Props) {
-  const progress = sample?.progress ?? 0;
+  const progressStart = usePlayback(s => s.progressStart);
+  const progressEnd = usePlayback(s => s.progressEnd);
+  const absTime = usePlayback(s => s.currentTime);
+  const track = usePlayback(s => s.track);
+  const trackOffset = usePlayback(s => s.trackOffset);
+
+  const hasRange =
+    progressStart !== null && progressEnd !== null && progressEnd > progressStart;
+
+  let progress = sample?.progress ?? 0;
+  let elapsed = currentTime;
+  if (hasRange) {
+    const tStart = progressStart as number;
+    const tEnd = progressEnd as number;
+    elapsed = Math.max(0, absTime - tStart);
+    const pts = track?.points ?? [];
+    const dStart = distanceAtTime(pts, trackOffset, tStart);
+    const dEnd = distanceAtTime(pts, trackOffset, tEnd);
+    const dNow = distanceAtTime(pts, trackOffset, absTime);
+    if (dStart !== null && dEnd !== null && dNow !== null && dEnd > dStart) {
+      progress = Math.max(0, Math.min(1, (dNow - dStart) / (dEnd - dStart)));
+    } else {
+      // Fallback to time-based when track has no time-tagged points.
+      progress = Math.max(0, Math.min(1, (absTime - tStart) / (tEnd - tStart)));
+    }
+  }
   const pct = Math.round(progress * 100);
 
   return (
@@ -101,7 +148,7 @@ export function TopLeftStatus({ sample, currentTime }: Props) {
         }}
       >
         <span>Elapsed</span>
-        <b style={{ color: 'var(--ink)', fontWeight: 500 }}>{formatElapsed(currentTime)}</b>
+        <b style={{ color: 'var(--ink)', fontWeight: 500 }}>{formatElapsed(elapsed)}</b>
       </div>
     </Draggable>
   );

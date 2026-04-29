@@ -194,6 +194,10 @@ interface PlaybackState {
   /** Selected playback range on the absolute axis. null = use full axis. */
   playbackStart: number | null;
   playbackEnd: number | null;
+  /** User-defined progress range; drives top-left elapsed/progress display.
+   *  null on either side falls back to telemetry sample.progress + raw time. */
+  progressStart: number | null;
+  progressEnd: number | null;
   /** Legacy export-duration override (kept for export pipeline). null = use
    *  effective selection length. */
   projectDuration: number | null;
@@ -234,6 +238,9 @@ interface PlaybackState {
   setTrackOffset(s: number): void;
   setVideoOffset(s: number): void;
   setSelection(start: number | null, end: number | null): void;
+  setProgressStart(t: number | null): void;
+  setProgressEnd(t: number | null): void;
+  clearProgressRange(): void;
   clearVideo(): void;
   setSourceTrim(source: SourceKey, start: number, end: number): void;
 }
@@ -273,6 +280,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   videoTrimEnd: 0,
   playbackStart: null,
   playbackEnd: null,
+  progressStart: null,
+  progressEnd: null,
   projectDuration: null,
 
   setPreviewAspect: a => set({ previewAspect: a }),
@@ -361,6 +370,19 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     set({ videoOffset: offset });
     snapPlayheadToAxis(set, get);
   },
+  setProgressStart: t => {
+    const s = get();
+    let end = s.progressEnd;
+    if (t !== null && end !== null && end < t) end = null;
+    set({ progressStart: t, progressEnd: end });
+  },
+  setProgressEnd: t => {
+    const s = get();
+    let start = s.progressStart;
+    if (t !== null && start !== null && start > t) start = null;
+    set({ progressEnd: t, progressStart: start });
+  },
+  clearProgressRange: () => set({ progressStart: null, progressEnd: null }),
   setSelection: (start, end) => {
     if (start !== null && end !== null && end < start) [start, end] = [end, start];
     set({ playbackStart: start, playbackEnd: end });

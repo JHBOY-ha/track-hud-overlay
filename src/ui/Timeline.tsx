@@ -57,6 +57,8 @@ export function Timeline() {
   const playbackStart = usePlayback(s => s.playbackStart);
   const playbackEnd = usePlayback(s => s.playbackEnd);
   const exporterMode = usePlayback(s => s.exporterMode);
+  const progressStart = usePlayback(s => s.progressStart);
+  const progressEnd = usePlayback(s => s.progressEnd);
 
   const telemetryOffset = usePlayback(s => s.telemetryOffset);
   const trackOffset = usePlayback(s => s.trackOffset);
@@ -549,6 +551,58 @@ export function Timeline() {
         >
           设为终点
         </button>
+        <span style={{ width: 1, height: 20, background: '#333' }} />
+        <button
+          onClick={() => usePlayback.getState().setProgressStart(usePlayback.getState().currentTime)}
+          disabled={!hasAnyData}
+          style={{
+            padding: '4px 10px',
+            background: '#333',
+            color: '#9ad6ff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: hasAnyData ? 'pointer' : 'default',
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="将当前时间设为左上角进度条起点（0%）"
+        >
+          进度起点
+        </button>
+        <button
+          onClick={() => usePlayback.getState().setProgressEnd(usePlayback.getState().currentTime)}
+          disabled={!hasAnyData}
+          style={{
+            padding: '4px 10px',
+            background: '#333',
+            color: '#9ad6ff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: hasAnyData ? 'pointer' : 'default',
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="将当前时间设为左上角进度条终点（100%）"
+        >
+          进度终点
+        </button>
+        <button
+          onClick={() => usePlayback.getState().clearProgressRange()}
+          disabled={progressStart === null && progressEnd === null}
+          style={{
+            padding: '4px 10px',
+            background: '#333',
+            color: '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: progressStart !== null || progressEnd !== null ? 'pointer' : 'default',
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="清除进度区间，恢复使用 telemetry progress 字段"
+        >
+          清除进度
+        </button>
       </div>
 
       {/* Track region */}
@@ -687,6 +741,54 @@ export function Timeline() {
             </div>
           );
         })}
+
+        {/* Progress range markers */}
+        {pxPerSec > 0 && progressStart !== null && progressEnd !== null && progressEnd > progressStart && (
+          <div
+            style={{
+              position: 'absolute',
+              left: tToX(progressStart),
+              top: 0,
+              bottom: 0,
+              width: Math.max(1, tToX(progressEnd) - tToX(progressStart)),
+              background: 'rgba(154, 214, 255, 0.08)',
+              borderTop: '2px solid rgba(154, 214, 255, 0.7)',
+              pointerEvents: 'none',
+            }}
+          />
+        )}
+        {pxPerSec > 0 && progressStart !== null && (
+          <div
+            style={{
+              position: 'absolute',
+              left: tToX(progressStart),
+              top: 0,
+              bottom: 0,
+              width: 1,
+              background: '#9ad6ff',
+              pointerEvents: 'none',
+            }}
+            title="进度起点"
+          >
+            <div style={{ position: 'absolute', top: 0, left: 0, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>0%</div>
+          </div>
+        )}
+        {pxPerSec > 0 && progressEnd !== null && (
+          <div
+            style={{
+              position: 'absolute',
+              left: tToX(progressEnd),
+              top: 0,
+              bottom: 0,
+              width: 1,
+              background: '#9ad6ff',
+              pointerEvents: 'none',
+            }}
+            title="进度终点"
+          >
+            <div style={{ position: 'absolute', top: 0, left: -22, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>100%</div>
+          </div>
+        )}
 
         {/* Playhead */}
         {hasAnyData && pxPerSec > 0 && (

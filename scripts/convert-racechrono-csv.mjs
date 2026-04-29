@@ -13,7 +13,7 @@
 //        [--ratios=local/..._gear_ratios_with_final_drive.csv]
 //        [--tire=265/40R18]               # override stock tire
 //        [--rpm-idle=700] [--min-kmh=5]   # gear estimation thresholds
-//        [--position-current=10] [--position-total=12]
+//        [--position-current=1] [--position-total=2]
 //        [--rate=N]                       # force fixed Hz output
 //        [--speed-source=gps|obd|calc]    # default: gps
 //
@@ -31,8 +31,8 @@ const opts = {
   tire: null,
   rpmIdle: 700,
   minKmh: 5,
-  positionCurrent: 10,
-  positionTotal: 12,
+  positionCurrent: 1,
+  positionTotal: 2,
   rate: null,
   speedSource: 'gps',
   brakeFromG: true,

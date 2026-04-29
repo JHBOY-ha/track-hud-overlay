@@ -6,8 +6,8 @@ interface Props {
 }
 
 export function TopRightPosition({ sample }: Props) {
-  const cur = sample?.positionCurrent ?? 10;
-  const tot = sample?.positionTotal ?? 12;
+  const cur = sample?.positionCurrent ?? 1;
+  const tot = sample?.positionTotal ?? 2;
 
   const pips = Array.from({ length: tot }, (_, i) => {
     const rank = i + 1;
