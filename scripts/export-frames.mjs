@@ -256,18 +256,15 @@ export async function main() {
       const v = String(SNAP_TO_ROADS).trim().toLowerCase();
       url.searchParams.set('snapToRoads', v === '1' || v === 'true' ? '1' : '0');
     }
-    if (SNAP_MAX_DIST !== null && Number.isFinite(Number(SNAP_MAX_DIST))) {
-      url.searchParams.set('snapMaxDistM', String(Number(SNAP_MAX_DIST)));
-    }
-    if (MINIMAP_RADIUS !== null && Number.isFinite(Number(MINIMAP_RADIUS))) {
-      url.searchParams.set('minimapViewRadiusM', String(Number(MINIMAP_RADIUS)));
-    }
-    if (MINIMAP_TILT !== null && Number.isFinite(Number(MINIMAP_TILT))) {
-      url.searchParams.set('minimapTiltDeg', String(Number(MINIMAP_TILT)));
-    }
-    if (MINIMAP_STROKE !== null && Number.isFinite(Number(MINIMAP_STROKE))) {
-      url.searchParams.set('minimapStrokeWidth', String(Number(MINIMAP_STROKE)));
-    }
+    const setNumParam = (key, raw) => {
+      if (raw === null) return;
+      const n = Number(raw);
+      if (Number.isFinite(n)) url.searchParams.set(key, String(n));
+    };
+    setNumParam('snapMaxDistM', SNAP_MAX_DIST);
+    setNumParam('minimapViewRadiusM', MINIMAP_RADIUS);
+    setNumParam('minimapTiltDeg', MINIMAP_TILT);
+    setNumParam('minimapStrokeWidth', MINIMAP_STROKE);
 
     console.log(`[export] opening ${url}`);
     const browser = await puppeteer.launch({
@@ -305,32 +302,17 @@ export async function main() {
     let ffmpeg = null;
     let ffmpegExit = null;
     if (pipeToFfmpeg) {
-      const ffmpegArgs = ext === '.webm'
-        ? [
-            '-y',
-            '-f', 'image2pipe',
-            '-c:v', 'png',
-            '-framerate', String(FPS),
-            '-i', '-',
-            '-c:v', 'libvpx-vp9',
-            '-pix_fmt', 'yuva420p',
-            '-b:v', '0',
-            '-crf', '28',
-            outPath,
-          ]
+      const inputArgs = ['-y', '-f', 'image2pipe', '-c:v', 'png', '-framerate', String(FPS), '-i', '-'];
+      const outputArgs = ext === '.webm'
+        ? ['-c:v', 'libvpx-vp9', '-pix_fmt', 'yuva420p', '-b:v', '0', '-crf', '28']
         : [
-            '-y',
-            '-f', 'image2pipe',
-            '-c:v', 'png',
-            '-framerate', String(FPS),
-            '-i', '-',
             '-c:v', 'prores_ks',
             '-profile:v', '4',
             '-pix_fmt', 'yuva444p10le',
             '-timecode', outputTimecode,
             '-metadata', `timecode=${outputTimecode}`,
-            outPath,
           ];
+      const ffmpegArgs = [...inputArgs, ...outputArgs, outPath];
       ffmpeg = spawn('ffmpeg', ffmpegArgs, { stdio: ['pipe', 'inherit', 'inherit'] });
       ffmpeg.stdin.on('error', () => {});
       ffmpegExit = new Promise((res, rej) => {

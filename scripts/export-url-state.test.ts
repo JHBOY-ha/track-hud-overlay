@@ -67,10 +67,10 @@ test('export command carries advanced HUD settings', () => {
   assert.match(exportFramesSource, /MINIMAP_TILT = arg\('minimap-tilt', null\)/);
   assert.match(exportFramesSource, /MINIMAP_STROKE = arg\('minimap-stroke', null\)/);
   assert.match(exportFramesSource, /url\.searchParams\.set\('snapToRoads',/);
-  assert.match(exportFramesSource, /url\.searchParams\.set\('snapMaxDistM',/);
-  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapViewRadiusM',/);
-  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapTiltDeg',/);
-  assert.match(exportFramesSource, /url\.searchParams\.set\('minimapStrokeWidth',/);
+  assert.match(exportFramesSource, /setNumParam\('snapMaxDistM', SNAP_MAX_DIST\)/);
+  assert.match(exportFramesSource, /setNumParam\('minimapViewRadiusM', MINIMAP_RADIUS\)/);
+  assert.match(exportFramesSource, /setNumParam\('minimapTiltDeg', MINIMAP_TILT\)/);
+  assert.match(exportFramesSource, /setNumParam\('minimapStrokeWidth', MINIMAP_STROKE\)/);
 });
 
 test('enriched output track files use /output export URLs', () => {
