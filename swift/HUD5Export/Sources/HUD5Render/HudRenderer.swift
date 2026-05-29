@@ -19,8 +19,7 @@ public enum HudRenderer {
     private static let inkFaint = CGColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 0.4)
     private static let accent = CGColor(red: 1.0, green: 0.84, blue: 0.18, alpha: 1)
     private static let track = CGColor(red: 1, green: 1, blue: 1, alpha: 0.16)
-    private static let brakeColor = CGColor(red: 1.0, green: 0.27, blue: 0.27, alpha: 1)
-    private static let shadow = CGColor(red: 0, green: 0, blue: 0, alpha: 0.55)
+    private static let brakeColor = CGColor(red: 0.86, green: 0.30, blue: 0.22, alpha: 1)
 
     public static func draw(_ state: FrameState, in ctx: CGContext,
                             width: CGFloat = stageWidth, height: CGFloat = stageHeight) {
@@ -64,35 +63,8 @@ public enum HudRenderer {
     // MARK: Top-left status (elapsed + throttle/brake)
 
     private static func drawTopLeftStatus(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
-        let x: CGFloat = 70
-        drawText(formatTimecode(state.elapsed, fps: 60), x: x, yTop: 70, size: 40, color: ink,
+        drawText(formatTimecode(state.elapsed, fps: 60), x: 70, yTop: 70, size: 40, color: ink,
                  ctx: ctx, height: height, align: .left, weight: .semibold, mono: true)
-
-        if let s = state.sample {
-            var rowY: CGFloat = 132
-            if let throttle = s.throttle {
-                drawBar(label: "THR", value: clamp(throttle <= 1 ? throttle : throttle / 100, 0, 1),
-                        x: x, yTop: rowY, color: accent, ctx: ctx, height: height)
-                rowY += 40
-            }
-            if let brake = s.brake {
-                drawBar(label: "BRK", value: clamp(brake <= 1 ? brake : brake / 100, 0, 1),
-                        x: x, yTop: rowY, color: brakeColor, ctx: ctx, height: height)
-            }
-        }
-    }
-
-    private static func drawBar(label: String, value: Double, x: CGFloat, yTop: CGFloat,
-                                color: CGColor, ctx: CGContext, height: CGFloat) {
-        drawText(label, x: x, yTop: yTop, size: 22, color: inkFaint, ctx: ctx, height: height,
-                 align: .left, weight: .medium, mono: true)
-        let barX = x + 70, barW: CGFloat = 220, barH: CGFloat = 16
-        let y = flip(yTop + 20, height)
-        let bg = CGRect(x: barX, y: y, width: barW, height: barH)
-        ctx.setFillColor(track)
-        ctx.fill(bg)
-        ctx.setFillColor(color)
-        ctx.fill(CGRect(x: barX, y: y, width: barW * CGFloat(value), height: barH))
     }
 
     // MARK: Top-right position
@@ -196,52 +168,150 @@ public enum HudRenderer {
         ctx.restoreGState()
     }
 
-    // MARK: Speedometer (bottom-center arc)
+    // MARK: Speedometer (open-bottom gauge, bottom-right)
+    //
+    // Geometry mirrors src/hud/Speedometer.tsx: a GAUGE=340 disc anchored
+    // bottom-right; the RPM ring sweeps START_DEG(135°)→END_DEG(405°) clockwise
+    // in SVG (y-down) space, leaving an open bottom. We build arcs in that same
+    // top-down space and convert each sampled point to the context's
+    // bottom-left origin via `flip`, so the result matches the web exactly.
+
+    private static let gaugeSize: CGFloat = 340
+    private static let gaugeR: CGFloat = 146
+    private static let gaugeInnerR: CGFloat = 108
+    private static let gaugeStartDeg: CGFloat = 135
+    private static let gaugeEndDeg: CGFloat = 405
+    private static let gaugeRedFrac: CGFloat = 7000.0 / 8000.0
+    private static let brakeStartDeg: CGFloat = 150
+    private static let brakeEndDeg: CGFloat = 220
+    private static let throttleStartDeg: CGFloat = 320
+    private static let throttleEndDeg: CGFloat = 390
+
+    private static let redZone = CGColor(red: 0.78, green: 0.13, blue: 0.12, alpha: 0.85)
+    private static let throttleColor = CGColor(red: 0.30, green: 0.56, blue: 0.95, alpha: 1)
+    private static let activeArc = CGColor(red: 1, green: 1, blue: 1, alpha: 0.9)
+    private static let teal = CGColor(red: 0.36, green: 0.85, blue: 0.78, alpha: 1)
+
+    /// Build a stroked arc path in SVG-like top-down space, sampled finely and
+    /// flipped into the context's bottom-left origin.
+    private static func arcPath(cx: CGFloat, cyTopDown: CGFloat, radius: CGFloat,
+                                startDeg: CGFloat, endDeg: CGFloat, height: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        let step: CGFloat = 1.5
+        var deg = startDeg
+        var first = true
+        while deg <= endDeg + 0.0001 {
+            let r = deg * .pi / 180
+            let x = cx + cos(r) * radius
+            let yTopDown = cyTopDown + sin(r) * radius
+            let p = CGPoint(x: x, y: flip(yTopDown, height))
+            if first { path.move(to: p); first = false } else { path.addLine(to: p) }
+            deg += step
+        }
+        return path
+    }
+
+    private static func strokeArc(_ ctx: CGContext, cx: CGFloat, cy: CGFloat, radius: CGFloat,
+                                  from: CGFloat, to: CGFloat, color: CGColor, lineWidth: CGFloat,
+                                  cap: CGLineCap = .butt, height: CGFloat) {
+        guard to > from + 0.001 else { return }
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(lineWidth)
+        ctx.setLineCap(cap)
+        ctx.addPath(arcPath(cx: cx, cyTopDown: cy, radius: radius, startDeg: from, endDeg: to, height: height))
+        ctx.strokePath()
+    }
 
     private static func drawSpeedometer(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
-        let cx = width / 2
-        let cyTop = height - 150
-        let cy = flip(cyTop, height)
-        let radius: CGFloat = 150
-        // Arc spans 240° centered downward-ish: from 150° to -30° (CCW in CG).
-        let startAngle = CGFloat.pi * (7.0 / 6.0)   // 210°
-        let endAngle = CGFloat.pi * (-1.0 / 6.0)    // -30°
+        let s = state.sample
+        // Disc anchored bottom-right (right:48, bottom:45 in the web stage).
+        let boxLeft = width - 48 - gaugeSize
+        let boxTopDown = height - 45 - gaugeSize
+        let cx = boxLeft + gaugeSize / 2
+        let cy = boxTopDown + gaugeSize / 2  // top-down center
 
-        // Background arc.
-        ctx.setStrokeColor(track)
-        ctx.setLineWidth(14)
-        ctx.setLineCap(.round)
-        ctx.beginPath()
-        ctx.addArc(center: CGPoint(x: cx, y: cy), radius: radius,
-                   startAngle: startAngle, endAngle: endAngle, clockwise: true)
-        ctx.strokePath()
-
-        // RPM sweep.
-        if let s = state.sample, let rpm = s.rpm, state.rpmMax > 0 {
-            let frac = clamp(rpm / state.rpmMax, 0, 1)
-            let sweepEnd = startAngle + (endAngle - startAngle) * CGFloat(frac)
-            ctx.setStrokeColor(accent)
-            ctx.setLineWidth(14)
-            ctx.beginPath()
-            ctx.addArc(center: CGPoint(x: cx, y: cy), radius: radius,
-                       startAngle: startAngle, endAngle: sweepEnd, clockwise: true)
-            ctx.strokePath()
+        // Concentric guide rings.
+        for (r, a) in [(gaugeR + 16, 0.06), (gaugeR + 8, 0.12), (gaugeR - 22, 0.08)] {
+            strokeArc(ctx, cx: cx, cy: cy, radius: r, from: 0, to: 360,
+                      color: CGColor(red: 1, green: 1, blue: 1, alpha: a), lineWidth: 1, height: height)
         }
 
-        // Numeric speed.
-        let speedKmh = state.sample?.speedKmh
-        let displayed = speedKmh.map { Int(convertSpeed($0, unit: state.unit).rounded()) }
-        let speedText = displayed.map(String.init) ?? "--"
-        drawText(speedText, x: cx, yTop: cyTop - 6, size: 110, color: ink, ctx: ctx,
-                 height: height, align: .center, weight: .bold, mono: true, baselineCenter: true)
-        drawText(speedUnitLabel(state.unit), x: cx, yTop: cyTop + 64, size: 30, color: inkFaint,
-                 ctx: ctx, height: height, align: .center, weight: .medium, mono: true)
+        // RPM background track.
+        strokeArc(ctx, cx: cx, cy: cy, radius: gaugeR, from: gaugeStartDeg, to: gaugeEndDeg,
+                  color: track, lineWidth: 8, height: height)
 
-        // Gear.
-        if let gear = state.sample?.gear {
-            drawText(gearString(gear), x: cx, yTop: cyTop - 110, size: 56, color: accent, ctx: ctx,
-                     height: height, align: .center, weight: .bold, mono: true)
+        let sweep = gaugeEndDeg - gaugeStartDeg
+        let redDeg = gaugeStartDeg + sweep * gaugeRedFrac
+        // Red zone.
+        strokeArc(ctx, cx: cx, cy: cy, radius: gaugeR, from: redDeg, to: gaugeEndDeg,
+                  color: redZone, lineWidth: 8, height: height)
+
+        let rpm = CGFloat(s?.rpm ?? 0)
+        let maxRpm = CGFloat(s?.rpmMax ?? state.rpmMax)
+        let rpmFrac = max(0, min(rpm / max(maxRpm, 1), 1))
+        let curDeg = gaugeStartDeg + sweep * rpmFrac
+        let whiteEnd = min(curDeg, redDeg)
+        // Active white arc.
+        strokeArc(ctx, cx: cx, cy: cy, radius: gaugeR, from: gaugeStartDeg, to: whiteEnd,
+                  color: activeArc, lineWidth: 8, height: height)
+
+        // Inner brake arc (left): fills from the bottom end upward.
+        let brake = CGFloat(clamp(Double(s?.brake ?? 0), 0, 1))
+        strokeArc(ctx, cx: cx, cy: cy, radius: gaugeInnerR, from: brakeStartDeg, to: brakeEndDeg,
+                  color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.1), lineWidth: 6, cap: .round, height: height)
+        if brake > 0.001 {
+            let fillStart = brakeEndDeg - (brakeEndDeg - brakeStartDeg) * brake
+            strokeArc(ctx, cx: cx, cy: cy, radius: gaugeInnerR, from: fillStart, to: brakeEndDeg,
+                      color: brakeColor, lineWidth: 6, cap: .round, height: height)
         }
+
+        // Inner throttle arc (right): fills from the bottom end upward.
+        let throttle = CGFloat(clamp(Double(s?.throttle ?? 0), 0, 1))
+        strokeArc(ctx, cx: cx, cy: cy, radius: gaugeInnerR, from: throttleStartDeg, to: throttleEndDeg,
+                  color: CGColor(red: 1, green: 1, blue: 1, alpha: 0.1), lineWidth: 6, cap: .round, height: height)
+        if throttle > 0.001 {
+            let fillEnd = throttleStartDeg + (throttleEndDeg - throttleStartDeg) * throttle
+            strokeArc(ctx, cx: cx, cy: cy, radius: gaugeInnerR, from: throttleStartDeg, to: fillEnd,
+                      color: throttleColor, lineWidth: 6, cap: .round, height: height)
+        }
+
+        // Marker dot at the current RPM position.
+        if rpmFrac > 0.001 {
+            let r = curDeg * .pi / 180
+            let dot = CGPoint(x: cx + cos(r) * gaugeR, y: flip(cy + sin(r) * gaugeR, height))
+            ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            ctx.fillEllipse(in: CGRect(x: dot.x - 5, y: dot.y - 5, width: 10, height: 10))
+        }
+
+        // Center stack: speed / unit / gear / rpm / RPM, vertically centered.
+        let speedKmh = s?.speedKmh ?? 0
+        let speedText = String(max(0, Int(convertSpeed(speedKmh, unit: state.unit).rounded())))
+        let gear = gearString(s?.gear ?? .neutral)
+        let rpmText = String(Int(rpm.rounded()))
+
+        // Column metrics mirror the flex stack in Speedometer.tsx.
+        let startY = cy - 101
+        drawText(speedText, x: cx, yTop: startY, size: 32, color: ink, ctx: ctx,
+                 height: height, align: .center, weight: .bold, mono: false)
+        drawText(speedUnitLabel(state.unit), x: cx, yTop: startY + 35, size: 10, color: inkFaint,
+                 ctx: ctx, height: height, align: .center, weight: .medium, mono: true, tracking: 2)
+        drawText(gear, x: cx, yTop: startY + 51, size: 100, color: ink, ctx: ctx,
+                 height: height, align: .center, weight: .black, mono: false)
+        drawText(rpmText, x: cx, yTop: startY + 159, size: 30, color: ink, ctx: ctx,
+                 height: height, align: .center, weight: .bold, mono: false)
+        drawText("RPM", x: cx, yTop: startY + 192, size: 10, color: inkFaint, ctx: ctx,
+                 height: height, align: .center, weight: .medium, mono: true, tracking: 2)
+
+        // Assist badges near the bottom of the disc.
+        let abs = s?.abs ?? false
+        let tcs = s?.tcs ?? false
+        let badgeY = boxTopDown + gaugeSize - 58
+        drawText("ABS", x: cx - 44, yTop: badgeY, size: 11, color: abs ? teal : inkFaint, ctx: ctx,
+                 height: height, align: .center, weight: .medium, mono: true, tracking: 1.5)
+        drawText("TCR", x: cx, yTop: badgeY, size: 11, color: tcs ? teal : inkFaint, ctx: ctx,
+                 height: height, align: .center, weight: .medium, mono: true, tracking: 1.5)
+        drawText("ESP", x: cx + 44, yTop: badgeY, size: 11, color: inkFaint, ctx: ctx,
+                 height: height, align: .center, weight: .medium, mono: true, tracking: 1.5)
     }
 
     private static func gearString(_ gear: GearValue) -> String {
@@ -254,7 +324,7 @@ public enum HudRenderer {
 
     // MARK: Text
 
-    enum Weight { case regular, medium, semibold, bold }
+    enum Weight { case regular, medium, semibold, bold, black }
     enum Align { case left, center, right }
 
     private static func ctFont(size: CGFloat, weight: Weight, mono: Bool) -> CTFont {
@@ -264,6 +334,7 @@ public enum HudRenderer {
         case .medium: traitWeight = 0.23
         case .semibold: traitWeight = 0.3
         case .bold: traitWeight = 0.4
+        case .black: traitWeight = 0.62
         }
         // Pick a base family; fall back gracefully if a name is unavailable.
         let candidates: [String] = mono
@@ -286,12 +357,15 @@ public enum HudRenderer {
     private static func drawText(_ s: String, x: CGFloat, yTop: CGFloat, size: CGFloat,
                                  color: CGColor, ctx: CGContext, height: CGFloat,
                                  align: Align, weight: Weight, mono: Bool,
-                                 baselineCenter: Bool = false) {
+                                 baselineCenter: Bool = false, tracking: CGFloat = 0) {
         let font = ctFont(size: size, weight: weight, mono: mono)
-        let attrs: [NSAttributedString.Key: Any] = [
+        var attrs: [NSAttributedString.Key: Any] = [
             NSAttributedString.Key(kCTFontAttributeName as String): font,
             NSAttributedString.Key(kCTForegroundColorAttributeName as String): color,
         ]
+        if tracking != 0 {
+            attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = tracking
+        }
         let attr = NSAttributedString(string: s, attributes: attrs)
         let line = CTLineCreateWithAttributedString(attr as CFAttributedString)
         var ascent: CGFloat = 0, descent: CGFloat = 0, leading: CGFloat = 0
