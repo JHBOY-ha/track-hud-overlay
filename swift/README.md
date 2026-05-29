@@ -65,10 +65,14 @@ the export and UI stages depend on.
 - [x] Data layer (`HUD5Core`) — ported + tested against the TS suites
 - [x] Export pipeline (`HUD5Export`) — native ProRes 4444 alpha, verified end-to-end
 - [x] Preview app skeleton (`HUD5App`) — compiles + launches; playback + loading
-- [ ] HUD visual fidelity pass (CSS/SVG gradients, minimap perspective, fonts)
+- [x] Speedometer fidelity — matches Speedometer.tsx geometry
+- [x] Top-left progress + top-right position panels — match their TSX sources
+- [ ] Minimap fidelity — currently flat top-down; the web uses a tilted
+      perspective plane with radial fade + ring mask (minimapViewport.ts)
 - [ ] AVPlayer video time source + sync in the app
 - [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
 - [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
 - [ ] Retire the web stack once at parity
 
-The fidelity / video / edit-mode stages are best done in Xcode.
+The minimap-perspective / video / edit-mode stages are best done in Xcode
+(View Debugger for layer geometry, live Previews for tuning).
