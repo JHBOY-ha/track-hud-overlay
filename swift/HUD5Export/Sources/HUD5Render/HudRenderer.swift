@@ -181,17 +181,18 @@ public enum HudRenderer {
     private static let mmAnchorFrac: CGFloat = 0.72  // MINIMAP_ANCHOR_Y = DISC*0.72
     private static let mmTiltDeg: CGFloat = 70       // MINIMAP_PLANE_TILT_DEG
     private static let mmPerspective: CGFloat = 760  // perspective(760px)
+    private static let mmPlaneSideOverdraw: CGFloat = 180
+    private static let mmPlaneTopOverdraw: CGFloat = 800
+    private static let mmPlaneBottomOverdraw: CGFloat = 128
+    private static let mmPlaneTopFadeOpacity: CGFloat = 0.4
 
     private static func drawMinimap(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
         let mToPx = mmRadius / mmViewRadiusM
         let discTopTopDown = height - mmBottom - mmDisc
+        let discLeft = mmLeft
         let cxv = mmLeft + mmDisc / 2
         let cyTopDown = discTopTopDown + mmDisc / 2
         let centerCG = CGPoint(x: cxv, y: flip(cyTopDown, height))
-        // The car sits at 0.72·DISC down the disc; the ground plane tilts back
-        // around this anchor so the road ahead recedes upward.
-        let anchorYTopDown = discTopTopDown + mmDisc * mmAnchorFrac
-
         let planned = state.layers.first { $0.kind == .planned }
         let driven = state.layers.first { $0.kind == .driven } ?? planned
         let references = state.layers.filter { $0.kind == .reference }
@@ -271,39 +272,97 @@ public enum HudRenderer {
             let cosA = cos(a), sinA = sin(a)
             let tilt = mmTiltDeg * .pi / 180
             let cosT = cos(tilt), sinT = sin(tilt)
-            // Port of `perspective(760px) rotateX(70deg)` about the anchor:
-            // rotate the plane point about the horizontal axis (y-z), then
-            // project with the CSS perspective scale P/(P - z).
-            // Returns nil when the point falls at/behind the perspective
-            // horizon (z ≥ camera), so callers can break the polyline there.
-            func mapPoint(_ x: Double, _ y: Double) -> CGPoint? {
-                let mx = (CGFloat(x) - CGFloat(pose.x)) * mToPx
-                let my = (CGFloat(y) - CGFloat(pose.y)) * mToPx
-                let rx = mx * cosA - my * sinA           // heading-up rotation
-                let ry = mx * sinA + my * cosA           // (plane, y-down)
-                let zt = ry * sinT                        // depth after tilt
-                let denom = mmPerspective - zt
-                if denom <= 1 { return nil }              // behind the camera
-                let s = mmPerspective / denom
-                let px = rx * s
-                let py = (ry * cosT) * s
-                return CGPoint(x: cxv + px, y: flip(anchorYTopDown + py, height))
+            let planeW = mmDisc + mmPlaneSideOverdraw * 2
+            let planeH = mmDisc + mmPlaneTopOverdraw + mmPlaneBottomOverdraw
+            let planeLeft = discLeft - mmPlaneSideOverdraw
+            let planeTop = discTopTopDown - mmPlaneTopOverdraw
+            let planeAnchor = CGPoint(
+                x: mmDisc / 2 + mmPlaneSideOverdraw,
+                y: mmDisc * mmAnchorFrac + mmPlaneTopOverdraw
+            )
+
+            struct PlanePoint {
+                var local: CGPoint
+                var screen: CGPoint
             }
+
+            func viewPoint(_ x: Double, _ y: Double) -> CGPoint {
+                CGPoint(x: mmDisc / 2 + CGFloat(x) * mToPx, y: mmDisc / 2 + CGFloat(y) * mToPx)
+            }
+
+            let poseView = viewPoint(pose.x, pose.y)
+
+            // Mirrors the web SVG/CSS pipeline:
+            // 1. point in DISC view coordinates,
+            // 2. translate(anchor) rotate(mapAngle) translate(-car),
+            // 3. CSS transform-origin(anchor) perspective(760px) rotateX(70deg),
+            // 4. offset by the overdrawn SVG plane's left/top.
+            func projectLocal(_ local: CGPoint) -> PlanePoint? {
+                let dx = local.x - planeAnchor.x
+                let dy = local.y - planeAnchor.y
+                let zt = dy * sinT
+                let denom = mmPerspective - zt
+                if denom <= 1 { return nil }
+                let s = mmPerspective / denom
+                let xTopDown = planeLeft + planeAnchor.x + dx * s
+                let yTopDown = planeTop + planeAnchor.y + dy * cosT * s
+                return PlanePoint(
+                    local: local,
+                    screen: CGPoint(x: xTopDown, y: flip(yTopDown, height))
+                )
+            }
+
+            func mapPoint(_ x: Double, _ y: Double) -> PlanePoint? {
+                let vp = viewPoint(x, y)
+                let dx = vp.x - poseView.x
+                let dy = vp.y - poseView.y
+                let rx = dx * cosA - dy * sinA
+                let ry = dx * sinA + dy * cosA
+                return projectLocal(CGPoint(x: planeAnchor.x + rx, y: planeAnchor.y + ry))
+            }
+
+            func planeFadeAlpha(_ local: CGPoint) -> CGFloat {
+                let r = max(planeW, planeH) * 0.7
+                let d = hypot(local.x - planeAnchor.x, local.y - planeAnchor.y) / r
+                if d <= 0.48 { return 1 }
+                if d <= 0.60 {
+                    let t = (d - 0.48) / 0.12
+                    return 1 + (mmPlaneTopFadeOpacity - 1) * t
+                }
+                if d <= 1.0 {
+                    let t = (d - 0.60) / 0.40
+                    return mmPlaneTopFadeOpacity * (1 - t)
+                }
+                return 0
+            }
+
             func strokeLayer(_ pts: [TrackPoint], _ color: CGColor, _ wPx: CGFloat) {
                 guard pts.count > 1 else { return }
-                ctx.setStrokeColor(color)
-                ctx.setLineWidth(wPx)
-                ctx.setLineCap(.round)
-                ctx.setLineJoin(.round)
-                var penDown = false
+                var prev: PlanePoint?
                 for p in pts {
-                    if let cg = mapPoint(p.x, p.y) {
-                        if penDown { ctx.addLine(to: cg) } else { ctx.move(to: cg); penDown = true }
-                    } else {
-                        penDown = false  // break the path at the horizon
+                    guard let cur = mapPoint(p.x, p.y) else {
+                        prev = nil
+                        continue
                     }
+                    if let prev {
+                        let mid = CGPoint(
+                            x: (prev.local.x + cur.local.x) / 2,
+                            y: (prev.local.y + cur.local.y) / 2
+                        )
+                        let alpha = planeFadeAlpha(mid)
+                        if alpha > 0.01 {
+                            ctx.setStrokeColor(colorWithMultipliedAlpha(color, alpha))
+                            ctx.setLineWidth(wPx)
+                            ctx.setLineCap(.butt)
+                            ctx.setLineJoin(.round)
+                            ctx.beginPath()
+                            ctx.move(to: prev.screen)
+                            ctx.addLine(to: cur.screen)
+                            ctx.strokePath()
+                        }
+                    }
+                    prev = cur
                 }
-                ctx.strokePath()
             }
 
             ctx.saveGState()
@@ -328,13 +387,19 @@ public enum HudRenderer {
 
             // Finish marker at the route end.
             if let last = (planned ?? driven)?.points.last, let f = mapPoint(last.x, last.y) {
+                let markerAlpha = planeFadeAlpha(f.local)
                 ctx.setStrokeColor(ink); ctx.setLineWidth(1.5)
-                ctx.strokeEllipse(in: CGRect(x: f.x - 4, y: f.y - 4, width: 8, height: 8))
-                ctx.setFillColor(ink)
-                ctx.fillEllipse(in: CGRect(x: f.x - 1.5, y: f.y - 1.5, width: 3, height: 3))
+                ctx.setStrokeColor(colorWithMultipliedAlpha(ink, markerAlpha))
+                ctx.strokeEllipse(in: CGRect(x: f.screen.x - 4, y: f.screen.y - 4, width: 8, height: 8))
+                ctx.setFillColor(colorWithMultipliedAlpha(ink, markerAlpha))
+                ctx.fillEllipse(in: CGRect(x: f.screen.x - 1.5, y: f.screen.y - 1.5, width: 3, height: 3))
             }
 
-            drawCarArrow(at: CGPoint(x: cxv, y: flip(anchorYTopDown, height)), ctx: ctx)
+            drawProjectedCarArrow(
+                at: planeAnchor,
+                project: { projectLocal($0)?.screen },
+                ctx: ctx
+            )
 
             // MAP_CONTENT_MASK: fully visible through the middle, then fades
             // softly before the inner ring edge.
@@ -421,6 +486,11 @@ public enum HudRenderer {
         c.copy(alpha: a) ?? c
     }
 
+    private static func colorWithMultipliedAlpha(_ c: CGColor, _ multiplier: CGFloat) -> CGColor {
+        let alpha = max(0, min(1, c.alpha * multiplier))
+        return c.copy(alpha: alpha) ?? c
+    }
+
     private static func applyRadialAlphaMask(
         _ ctx: CGContext,
         center: CGPoint,
@@ -467,21 +537,30 @@ public enum HudRenderer {
         ctx.restoreGState()
     }
 
-    /// The detailed car arrow from Minimap.tsx (scale 0.7), pointing up.
-    /// SVG y-down coordinates are converted to CoreGraphics y-up coordinates.
-    private static func drawCarArrow(at p: CGPoint, ctx: CGContext) {
+    /// The detailed car arrow from Minimap.tsx (scale 0.7), drawn in the same
+    /// overdrawn SVG plane and then projected through the CSS-equivalent
+    /// perspective transform.
+    private static func drawProjectedCarArrow(
+        at anchor: CGPoint,
+        project: (CGPoint) -> CGPoint?,
+        ctx: CGContext
+    ) {
         let s: CGFloat = 0.7
 
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: p.x + x * s, y: p.y - y * s)
+            CGPoint(x: anchor.x + x * s, y: anchor.y + y * s)
         }
 
         func path(_ points: [(CGFloat, CGFloat)], close: Bool = true) -> CGMutablePath {
             let p = CGMutablePath()
-            guard let first = points.first else { return p }
-            p.move(to: pt(first.0, first.1))
+            guard let first = points.first, let projectedFirst = project(pt(first.0, first.1)) else {
+                return p
+            }
+            p.move(to: projectedFirst)
             for point in points.dropFirst() {
-                p.addLine(to: pt(point.0, point.1))
+                if let projected = project(pt(point.0, point.1)) {
+                    p.addLine(to: projected)
+                }
             }
             if close { p.closeSubpath() }
             return p
