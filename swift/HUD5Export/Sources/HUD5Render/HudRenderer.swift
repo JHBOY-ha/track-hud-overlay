@@ -321,47 +321,32 @@ public enum HudRenderer {
                 return projectLocal(CGPoint(x: planeAnchor.x + rx, y: planeAnchor.y + ry))
             }
 
-            func planeFadeAlpha(_ local: CGPoint) -> CGFloat {
-                let r = max(planeW, planeH) * 0.7
-                let d = hypot(local.x - planeAnchor.x, local.y - planeAnchor.y) / r
-                if d <= 0.48 { return 1 }
-                if d <= 0.60 {
-                    let t = (d - 0.48) / 0.12
-                    return 1 + (mmPlaneTopFadeOpacity - 1) * t
-                }
-                if d <= 1.0 {
-                    let t = (d - 0.60) / 0.40
-                    return mmPlaneTopFadeOpacity * (1 - t)
-                }
-                return 0
-            }
-
             func strokeLayer(_ pts: [TrackPoint], _ color: CGColor, _ wPx: CGFloat) {
                 guard pts.count > 1 else { return }
-                var prev: PlanePoint?
+                ctx.setStrokeColor(color)
+                ctx.setLineWidth(wPx)
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                var penDown = false
                 for p in pts {
-                    guard let cur = mapPoint(p.x, p.y) else {
-                        prev = nil
-                        continue
-                    }
-                    if let prev {
-                        let mid = CGPoint(
-                            x: (prev.local.x + cur.local.x) / 2,
-                            y: (prev.local.y + cur.local.y) / 2
-                        )
-                        let alpha = planeFadeAlpha(mid)
-                        if alpha > 0.01 {
-                            ctx.setStrokeColor(colorWithMultipliedAlpha(color, alpha))
-                            ctx.setLineWidth(wPx)
-                            ctx.setLineCap(.butt)
-                            ctx.setLineJoin(.round)
-                            ctx.beginPath()
-                            ctx.move(to: prev.screen)
+                    if let cur = mapPoint(p.x, p.y) {
+                        if penDown {
                             ctx.addLine(to: cur.screen)
+                        } else {
+                            ctx.move(to: cur.screen)
+                            penDown = true
+                        }
+                    } else {
+                        if penDown {
                             ctx.strokePath()
                         }
+                        penDown = false
+                        ctx.beginPath()
+                        continue
                     }
-                    prev = cur
+                }
+                if penDown {
+                    ctx.strokePath()
                 }
             }
 
@@ -387,11 +372,9 @@ public enum HudRenderer {
 
             // Finish marker at the route end.
             if let last = (planned ?? driven)?.points.last, let f = mapPoint(last.x, last.y) {
-                let markerAlpha = planeFadeAlpha(f.local)
                 ctx.setStrokeColor(ink); ctx.setLineWidth(1.5)
-                ctx.setStrokeColor(colorWithMultipliedAlpha(ink, markerAlpha))
                 ctx.strokeEllipse(in: CGRect(x: f.screen.x - 4, y: f.screen.y - 4, width: 8, height: 8))
-                ctx.setFillColor(colorWithMultipliedAlpha(ink, markerAlpha))
+                ctx.setFillColor(ink)
                 ctx.fillEllipse(in: CGRect(x: f.screen.x - 1.5, y: f.screen.y - 1.5, width: 3, height: 3))
             }
 
@@ -399,6 +382,18 @@ public enum HudRenderer {
                 at: planeAnchor,
                 project: { projectLocal($0)?.screen },
                 ctx: ctx
+            )
+
+            applyProjectedPlaneAlphaMask(
+                ctx,
+                rect: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2),
+                height: height,
+                planeLeft: planeLeft,
+                planeTop: planeTop,
+                planeAnchor: planeAnchor,
+                cosT: cosT,
+                sinT: sinT,
+                planeRadius: max(planeW, planeH) * 0.7
             )
 
             // MAP_CONTENT_MASK: fully visible through the middle, then fades
@@ -486,11 +481,6 @@ public enum HudRenderer {
         c.copy(alpha: a) ?? c
     }
 
-    private static func colorWithMultipliedAlpha(_ c: CGColor, _ multiplier: CGFloat) -> CGColor {
-        let alpha = max(0, min(1, c.alpha * multiplier))
-        return c.copy(alpha: alpha) ?? c
-    }
-
     private static func applyRadialAlphaMask(
         _ ctx: CGContext,
         center: CGPoint,
@@ -512,6 +502,82 @@ public enum HudRenderer {
             endRadius: radius,
             options: []
         )
+        ctx.restoreGState()
+    }
+
+    private static func applyProjectedPlaneAlphaMask(
+        _ ctx: CGContext,
+        rect: CGRect,
+        height: CGFloat,
+        planeLeft: CGFloat,
+        planeTop: CGFloat,
+        planeAnchor: CGPoint,
+        cosT: CGFloat,
+        sinT: CGFloat,
+        planeRadius: CGFloat
+    ) {
+        let w = max(1, Int(rect.width.rounded(.up)))
+        let h = max(1, Int(rect.height.rounded(.up)))
+        var pixels = [UInt8](repeating: 0, count: w * h * 4)
+
+        func fadeAlpha(_ d: CGFloat) -> CGFloat {
+            if d <= 0.48 { return 1 }
+            if d <= 0.60 {
+                let t = (d - 0.48) / 0.12
+                return 1 + (mmPlaneTopFadeOpacity - 1) * t
+            }
+            if d <= 1.0 {
+                let t = (d - 0.60) / 0.40
+                return mmPlaneTopFadeOpacity * (1 - t)
+            }
+            return 0
+        }
+
+        for row in 0..<h {
+            let yCG = rect.minY + CGFloat(row) + 0.5
+            let yTop = height - yCG
+            let yFromOrigin = yTop - (planeTop + planeAnchor.y)
+            let denom = cosT * mmPerspective + yFromOrigin * sinT
+            if abs(denom) < 0.0001 { continue }
+
+            let dy = yFromOrigin * mmPerspective / denom
+            let perspectiveScale = mmPerspective / (mmPerspective - dy * sinT)
+            if perspectiveScale <= 0 { continue }
+
+            for col in 0..<w {
+                let xTop = rect.minX + CGFloat(col) + 0.5
+                let xFromOrigin = xTop - (planeLeft + planeAnchor.x)
+                let dx = xFromOrigin / perspectiveScale
+                let local = CGPoint(x: planeAnchor.x + dx, y: planeAnchor.y + dy)
+                let d = hypot(local.x - planeAnchor.x, local.y - planeAnchor.y) / planeRadius
+                let a = UInt8(max(0, min(255, fadeAlpha(d) * 255)))
+                let idx = (row * w + col) * 4
+                pixels[idx] = 0
+                pixels[idx + 1] = 0
+                pixels[idx + 2] = 0
+                pixels[idx + 3] = a
+            }
+        }
+
+        guard let provider = CGDataProvider(data: Data(pixels) as CFData),
+              let maskImage = CGImage(
+                width: w,
+                height: h,
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                bytesPerRow: w * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.last.rawValue),
+                provider: provider,
+                decode: nil,
+                shouldInterpolate: true,
+                intent: .defaultIntent
+              )
+        else { return }
+
+        ctx.saveGState()
+        ctx.setBlendMode(.destinationIn)
+        ctx.draw(maskImage, in: rect)
         ctx.restoreGState()
     }
 
