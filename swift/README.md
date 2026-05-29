@@ -65,10 +65,15 @@ the export and UI stages depend on.
 - [x] Data layer (`HUD5Core`) — ported + tested against the TS suites
 - [x] Export pipeline (`HUD5Export`) — native ProRes 4444 alpha, verified end-to-end
 - [x] Preview app skeleton (`HUD5App`) — compiles + launches; playback + loading
-- [x] Speedometer fidelity — matches Speedometer.tsx geometry
+- [x] Design tokens + fonts — exact oklch→sRGB colors, bundled Archivo +
+      JetBrains Mono (matches src/styles/tokens.css)
+- [x] Speedometer fidelity — geometry + dark radial disc (Speedometer.tsx)
 - [x] Top-left progress + top-right position panels — match their TSX sources
-- [ ] Minimap fidelity — currently flat top-down; the web uses a tilted
-      perspective plane with radial fade + ring mask (minimapViewport.ts)
+- [x] Minimap (flat mode) — disc, ring, heading-up 50m window, layers, car
+      arrow, compass N, scale bar, route/player/altitude labels (Minimap.tsx)
+- [ ] Minimap 70° perspective tilt — the web's 3D ground-plane look
+      (minimapViewport.ts); mine is flat. Best iterated in Xcode.
+- [ ] Soft edge fade + teal center glow on the minimap content
 - [ ] AVPlayer video time source + sync in the app
 - [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
 - [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
