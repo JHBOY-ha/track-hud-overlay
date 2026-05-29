@@ -31,13 +31,43 @@ const ROAD_TAGS = [
 const OSM_ENRICH_NS = 'https://openai.com/codex/osm-enrichment/1';
 const OSM_TILE_SIZE_DEG = 0.08;
 const COORDINATE_SYSTEMS = new Set(['wgs84', 'gcj02', 'bd09']);
+const ROAD_DEPTHS = new Set(['major', 'driveable', 'all']);
+const MAJOR_HIGHWAYS = new Set([
+  'motorway',
+  'motorway_link',
+  'trunk',
+  'trunk_link',
+  'primary',
+  'primary_link',
+  'secondary',
+  'secondary_link',
+  'tertiary',
+  'tertiary_link',
+]);
+const NON_DRIVEABLE_HIGHWAYS = new Set([
+  'bridleway',
+  'bus_stop',
+  'construction',
+  'corridor',
+  'cycleway',
+  'elevator',
+  'escape',
+  'footway',
+  'path',
+  'pedestrian',
+  'platform',
+  'proposed',
+  'raceway',
+  'steps',
+  'track',
+]);
 const GCJ_A = 6378245.0;
 const GCJ_EE = 0.00669342162296594323;
 const BD_X_PI = (Math.PI * 3000.0) / 180.0;
 
 function usage() {
   console.error(
-    'Usage: node scripts/enrich-gpx-with-osm.mjs <input.gpx> [out-dir] [--margin-deg=0.001] [--coord=wgs84|gcj02|bd09] [--refresh-osm]',
+    'Usage: node scripts/enrich-gpx-with-osm.mjs <input.gpx> [out-dir] [--margin-deg=0.001] [--coord=wgs84|gcj02|bd09] [--road-depth=major|driveable|all] [--ignore-service] [--refresh-osm]',
   );
 }
 
@@ -56,6 +86,8 @@ function parseArgs(argv) {
     outDir: positional[1] ?? 'output',
     marginDeg: flags['margin-deg'] === undefined ? 0.001 : Number(flags['margin-deg']),
     coordinateSystem: normalizeCoordinateSystem(flags.coord),
+    roadDepth: normalizeRoadDepth(flags['road-depth']),
+    ignoreService: flags['ignore-service'] === true,
     refreshOsm: flags['refresh-osm'] === true,
   };
 }
@@ -94,6 +126,10 @@ function firstText(body, localName) {
 
 function normalizeCoordinateSystem(value) {
   return COORDINATE_SYSTEMS.has(value) ? value : 'wgs84';
+}
+
+function normalizeRoadDepth(value) {
+  return ROAD_DEPTHS.has(value) ? value : 'all';
 }
 
 function outsideChina(lon, lat) {
@@ -301,6 +337,18 @@ export function parseOsmRoads(osmXml) {
     if (coords.length >= 2) roads.push({ id: attrs.id, tags, coords });
   }
   return roads;
+}
+
+export function filterRoads(roads, { roadDepth = 'all', ignoreService = false } = {}) {
+  const depth = normalizeRoadDepth(roadDepth);
+  return roads.filter(road => {
+    const highway = road.tags.highway;
+    if (ignoreService && highway === 'service') return false;
+    if (depth === 'all') return true;
+    if (depth === 'major') return MAJOR_HIGHWAYS.has(highway);
+    if (depth === 'driveable') return !NON_DRIVEABLE_HIGHWAYS.has(highway);
+    return true;
+  });
 }
 
 function project(lat, lon, originLat, originLon) {
@@ -526,6 +574,8 @@ export async function enrichGpxText(
     marginDeg = 0.001,
     refreshOsm = false,
     coordinateSystem = 'wgs84',
+    roadDepth = 'all',
+    ignoreService = false,
   } = {},
 ) {
   const resolvedOutDir = path.resolve(outDir);
@@ -536,7 +586,8 @@ export async function enrichGpxText(
   const bbox = bboxForPoints(points, marginDeg);
   const osmCache = path.join(resolvedOutDir, `${stem}_osm_bbox.osm`);
   const { xml: osmXml, sourceUrl, downloaded } = await loadOsmXml(bbox, osmCache, refreshOsm);
-  const roads = parseOsmRoads(osmXml);
+  const allRoads = parseOsmRoads(osmXml);
+  const roads = filterRoads(allRoads, { roadDepth, ignoreService });
   if (roads.length === 0) throw new Error('No OSM highway ways found in bbox.');
 
   const rows = enrichPoints(points, roads);
@@ -581,6 +632,8 @@ export async function run(argv = process.argv.slice(2)) {
     outDir,
     marginDeg: args.marginDeg,
     coordinateSystem: args.coordinateSystem,
+    roadDepth: args.roadDepth,
+    ignoreService: args.ignoreService,
     refreshOsm: args.refreshOsm,
   });
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Convert lon,lat,alt CSV to GPX at fixed 50Hz sample rate.
+// Convert lon,lat,alt CSV to GPX.
 // Usage: node scripts/csv-to-gpx-50hz.mjs <input.csv> [output.gpx] [startISO]
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,7 +32,8 @@ const raw = fs.readFileSync(inPath, 'utf8').trim().split(/\r?\n/);
 const header = raw[0].split(',').map(s => s.trim().toLowerCase());
 const iLon = header.indexOf('lon');
 const iLat = header.indexOf('lat');
-const iAlt = header.indexOf('alt');
+const iAlt = header.includes('alt') ? header.indexOf('alt') : header.indexOf('alt_m');
+const iTime = header.indexOf('rtc_utc');
 if (iLon < 0 || iLat < 0) throw new Error('CSV must have lon,lat columns');
 
 const dtMs = 1000 / 50; // 50 Hz
@@ -49,7 +50,8 @@ for (let i = 1; i < raw.length; i++) {
   const lat = Number(cols[iLat]);
   if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
   const ele = iAlt >= 0 ? Number(cols[iAlt]) : NaN;
-  const t = new Date(startMs + (i - 1) * dtMs).toISOString();
+  const parsedTime = iTime >= 0 ? Date.parse(cols[iTime]) : NaN;
+  const t = new Date(Number.isFinite(parsedTime) ? parsedTime : startMs + (i - 1) * dtMs).toISOString();
   const eleTag = Number.isFinite(ele) ? `<ele>${ele}</ele>` : '';
   out.push(`      <trkpt lat="${lat}" lon="${lon}">${eleTag}<time>${t}</time></trkpt>`);
 }

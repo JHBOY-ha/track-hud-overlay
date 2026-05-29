@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { buildGeoJsonFeatureCollection, enrichGpxText, splitBbox } from './enrich-gpx-with-osm.mjs';
+import { buildGeoJsonFeatureCollection, enrichGpxText, filterRoads, splitBbox } from './enrich-gpx-with-osm.mjs';
 
 test('buildGeoJsonFeatureCollection emits project layer kinds', () => {
   const points = [
@@ -117,6 +117,21 @@ test('enrichGpxText normalizes GCJ-02 GPX before matching and GeoJSON output', a
   assert.ok(Math.abs(driven[0][0] - 116.404) < 0.00002);
   assert.ok(Math.abs(driven[0][1] - 39.915) < 0.00002);
   assert.ok(Number(result.geoJson.features[2].properties.nearest_way_distance_m) < 0.5);
+});
+
+test('filterRoads supports driveable depth and service exclusion', () => {
+  const roads = [
+    { id: '1', tags: { highway: 'primary' }, coords: [] },
+    { id: '2', tags: { highway: 'residential' }, coords: [] },
+    { id: '3', tags: { highway: 'service' }, coords: [] },
+    { id: '4', tags: { highway: 'cycleway' }, coords: [] },
+    { id: '5', tags: { highway: 'footway' }, coords: [] },
+  ];
+
+  assert.deepEqual(
+    filterRoads(roads, { roadDepth: 'driveable', ignoreService: true }).map(road => road.id),
+    ['1', '2'],
+  );
 });
 
 test('splitBbox breaks long routes into OSM-sized tiles', () => {
