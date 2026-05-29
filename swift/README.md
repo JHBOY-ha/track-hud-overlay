@@ -69,11 +69,11 @@ the export and UI stages depend on.
       JetBrains Mono (matches src/styles/tokens.css)
 - [x] Speedometer fidelity — geometry + dark radial disc (Speedometer.tsx)
 - [x] Top-left progress + top-right position panels — match their TSX sources
-- [x] Minimap (flat mode) — disc, ring, heading-up 50m window, layers, car
-      arrow, compass N, scale bar, route/player/altitude labels (Minimap.tsx)
-- [ ] Minimap 70° perspective tilt — the web's 3D ground-plane look
-      (minimapViewport.ts); mine is flat. Best iterated in Xcode.
-- [ ] Soft edge fade + teal center glow on the minimap content
+- [x] Minimap — disc, ring, heading-up 50m window, layers, car arrow,
+      compass N, scale bar, route/player/altitude labels (Minimap.tsx)
+- [x] Minimap 70° perspective tilt — 3D ground plane via the CSS
+      perspective+rotateX port (car at 0.72 anchor, road recedes upward)
+- [ ] Soft edge fade + teal center glow on the minimap content (cosmetic)
 - [ ] AVPlayer video time source + sync in the app
 - [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
 - [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
