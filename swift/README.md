@@ -73,11 +73,12 @@ the export and UI stages depend on.
       compass N, scale bar, route/player/altitude labels (Minimap.tsx)
 - [x] Minimap 70° perspective tilt — 3D ground plane via the CSS
       perspective+rotateX port (car at 0.72 anchor, road recedes upward)
-- [ ] Soft edge fade + teal center glow on the minimap content (cosmetic)
+- [x] Minimap soft edge fade + teal center glow — CoreGraphics transparency
+      mask + stacked radial gradients matching Minimap.tsx
 - [ ] AVPlayer video time source + sync in the app
 - [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
 - [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
 - [ ] Retire the web stack once at parity
 
-The minimap-perspective / video / edit-mode stages are best done in Xcode
-(View Debugger for layer geometry, live Previews for tuning).
+The video / edit-mode stages are best done in Xcode (View Debugger for layer
+geometry, live Previews for tuning).

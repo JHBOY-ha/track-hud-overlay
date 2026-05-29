@@ -166,11 +166,11 @@ public enum HudRenderer {
 
     // MARK: Minimap
     //
-    // Faithful port of src/hud/Minimap.tsx (flat mode — the web's tilt=0
-    // setting): a DISC=240 disc anchored bottom-left showing a viewRadiusM=50
-    // window centered on the car, rotated heading-up, with reference/planned/
-    // driven layers, an outer ring, a compass N, a scale bar, and the route/
-    // player/altitude labels. The 70° perspective tilt is a later step.
+    // Faithful port of src/hud/Minimap.tsx: a DISC=240 disc anchored bottom-left
+    // showing a viewRadiusM=50 window centered on the car, rotated heading-up,
+    // tilted as a 70° perspective ground plane, with reference/planned/driven
+    // layers, the web radial masks/glow, an outer ring, a compass N, a scale
+    // bar, and the route/player/altitude labels.
 
     private static let mmDisc: CGFloat = 240
     private static let mmRadius: CGFloat = 240 / 2 - 12   // 108
@@ -207,9 +207,37 @@ public enum HudRenderer {
         drawText(distLabel, x: mmLeft + mmDisc, yTop: headerY, size: 10, color: inkDim, ctx: ctx,
                  height: height, align: .right, weight: .medium, mono: true, tracking: 2)
 
-        // Disc background — dark radial fade (port of the stacked gradients +
-        // alpha mask, simplified to one dark fade).
+        // Disc background — stacked CSS gradients from Minimap.tsx:
+        // teal ellipse at 50% 34%, plus the dark radial disc fade.
         let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        if let glow = CGGradient(
+            colorSpace: cs,
+            colorComponents: [
+                0.4706, 0.8235, 0.8235, 0.10,
+                0.4706, 0.8235, 0.8235, 0.03,
+                0.4706, 0.8235, 0.8235, 0.0,
+            ],
+            locations: [0, 0.34, 0.62],
+            count: 3
+        ) {
+            ctx.saveGState()
+            ctx.addEllipse(in: CGRect(
+                x: centerCG.x - mmDisc / 2,
+                y: centerCG.y - mmDisc / 2,
+                width: mmDisc,
+                height: mmDisc
+            ))
+            ctx.clip()
+            let glowCenter = CGPoint(x: cxv, y: flip(discTopTopDown + mmDisc * 0.34, height))
+            drawEllipticalRadialGradient(
+                glow,
+                center: glowCenter,
+                radius: mmDisc * 0.76,
+                yScale: 0.58,
+                ctx: ctx
+            )
+            ctx.restoreGState()
+        }
         let comps: [CGFloat] = [
             0.039, 0.047, 0.055, 0.42,
             0.039, 0.047, 0.055, 0.24,
@@ -268,6 +296,7 @@ public enum HudRenderer {
             ctx.saveGState()
             ctx.addEllipse(in: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2))
             ctx.clip()
+            ctx.beginTransparencyLayer(auxiliaryInfo: nil)
 
             for ref in references { strokeLayer(ref.points, CGColor(red: 1, green: 1, blue: 1, alpha: 0.18), mmStroke) }
             if let planned { strokeLayer(planned.points, withAlpha(teal, 0.45), mmStroke) }
@@ -291,6 +320,21 @@ public enum HudRenderer {
                 ctx.setFillColor(ink)
                 ctx.fillEllipse(in: CGRect(x: f.x - 1.5, y: f.y - 1.5, width: 3, height: 3))
             }
+            // MAP_CONTENT_MASK: fully visible through the middle, then fades
+            // softly before the inner ring edge.
+            applyRadialAlphaMask(
+                ctx,
+                center: centerCG,
+                radius: innerR,
+                stops: [
+                    (0.00, 1.0),
+                    (0.50, 1.0),
+                    (0.70, 0.72),
+                    (0.80, 0.30),
+                    (1.00, 0.0),
+                ]
+            )
+            ctx.endTransparencyLayer()
             ctx.restoreGState()
         }
 
@@ -362,6 +406,52 @@ public enum HudRenderer {
 
     private static func withAlpha(_ c: CGColor, _ a: CGFloat) -> CGColor {
         c.copy(alpha: a) ?? c
+    }
+
+    private static func applyRadialAlphaMask(
+        _ ctx: CGContext,
+        center: CGPoint,
+        radius: CGFloat,
+        stops: [(CGFloat, CGFloat)]
+    ) {
+        guard !stops.isEmpty else { return }
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let comps = stops.flatMap { _, alpha in [CGFloat(0), CGFloat(0), CGFloat(0), alpha] }
+        let locations = stops.map(\.0)
+        guard let grad = CGGradient(colorSpace: cs, colorComponents: comps, locations: locations, count: stops.count) else { return }
+        ctx.saveGState()
+        ctx.setBlendMode(.destinationIn)
+        ctx.drawRadialGradient(
+            grad,
+            startCenter: center,
+            startRadius: 0,
+            endCenter: center,
+            endRadius: radius,
+            options: []
+        )
+        ctx.restoreGState()
+    }
+
+    private static func drawEllipticalRadialGradient(
+        _ gradient: CGGradient,
+        center: CGPoint,
+        radius: CGFloat,
+        yScale: CGFloat,
+        ctx: CGContext
+    ) {
+        ctx.saveGState()
+        ctx.translateBy(x: center.x, y: center.y)
+        ctx.scaleBy(x: 1, y: yScale)
+        let scaledCenter = CGPoint.zero
+        ctx.drawRadialGradient(
+            gradient,
+            startCenter: scaledCenter,
+            startRadius: 0,
+            endCenter: scaledCenter,
+            endRadius: radius,
+            options: []
+        )
+        ctx.restoreGState()
     }
 
     /// The detailed car arrow from Minimap.tsx (scale 0.7), pointing up.
