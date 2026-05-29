@@ -1,4 +1,5 @@
 import Foundation
+import AVFoundation
 import Observation
 import HUD5Core
 import HUD5Render
@@ -18,18 +19,38 @@ final class AppModel {
     var rate: Double = 1
     var unit: SpeedUnit = .kmh
 
+    @ObservationIgnored
+    var videoPlayer: AVPlayer?
+
+    var videoDuration: Double = 0
     var telemetryOffset: Double = 0
     var trackOffset: Double = 0
     var telemetryTrimStart: Double = 0
     var telemetryTrimEnd: Double = 0
 
+    var videoName: String?
     var telemetryName: String?
     var trackName: String?
     var lastError: String?
 
+    /// Start of the shared absolute timeline. Sample files use local seconds
+    /// from midnight, so the preview should begin at the first source time
+    /// instead of at zero.
+    var timelineStart: Double {
+        var starts: [Double] = []
+        if let first = telemetry?.samples.first?.t { starts.append(first + telemetryOffset) }
+        if let first = track?.points.first?.t { starts.append(first + trackOffset) }
+        return starts.min() ?? 0
+    }
+
     /// End of the shared timeline (max of source durations), min 1s.
     var duration: Double {
-        max(telemetry?.duration ?? 0, track?.points.last?.t ?? 0, 1)
+        let sourceEnd = max(
+            telemetry.map { $0.duration + telemetryOffset } ?? 0,
+            track?.points.last?.t.map { $0 + trackOffset } ?? 0
+        )
+        let videoEnd = videoDuration > 0 ? timelineStart + videoDuration : 0
+        return max(sourceEnd, videoEnd, timelineStart + 1)
     }
 
     private var builder: FrameStateBuilder {
@@ -76,22 +97,73 @@ final class AppModel {
         clampPlayhead()
     }
 
-    // MARK: Transport
+    func loadVideo(url: URL) {
+        let asset = AVURLAsset(url: url)
+        let item = AVPlayerItem(asset: asset)
+        videoPlayer = AVPlayer(playerItem: item)
+        videoPlayer?.actionAtItemEnd = .pause
+        videoName = url.lastPathComponent
+        videoDuration = 0
+        clampPlayhead()
 
-    func togglePlay() { isPlaying.toggle() }
-    func seek(to t: Double) { currentTime = min(max(t, 0), duration) }
-
-    private func clampPlayhead() {
-        currentTime = min(currentTime, duration)
+        Task { @MainActor in
+            let loaded = try? await asset.load(.duration).seconds
+            guard videoName == url.lastPathComponent, let loaded, loaded.isFinite, loaded > 0 else { return }
+            videoDuration = loaded
+            clampPlayhead()
+        }
     }
 
-    /// Advance the playhead by `dt` seconds when playing (no-video time source,
-    /// mirroring the rAF loop in src/playback/store.ts). Loops at the end.
+    // MARK: Transport
+
+    func togglePlay() {
+        isPlaying.toggle()
+        if let videoPlayer {
+            if isPlaying {
+                if currentTime >= duration { seek(to: timelineStart) }
+                videoPlayer.rate = Float(rate)
+            } else {
+                videoPlayer.pause()
+            }
+        }
+    }
+
+    func seek(to t: Double) {
+        let clamped = min(max(t, timelineStart), duration)
+        currentTime = clamped
+        if let videoPlayer {
+            let videoSeconds = max(0, clamped - timelineStart)
+            videoPlayer.seek(to: CMTime(seconds: videoSeconds, preferredTimescale: 600))
+        }
+    }
+
+    private func clampPlayhead() {
+        if currentTime < timelineStart || currentTime > duration {
+            seek(to: timelineStart)
+        } else {
+            seek(to: currentTime)
+        }
+    }
+
+    /// Sync from AVPlayer when present; otherwise advance the internal
+    /// no-video playhead. Loops at the end of the shared timeline.
     func tick(dt: Double) {
+        if let videoPlayer {
+            let seconds = videoPlayer.currentTime().seconds
+            if seconds.isFinite {
+                currentTime = min(max(timelineStart + seconds, timelineStart), duration)
+            }
+            if isPlaying, currentTime >= duration {
+                seek(to: timelineStart)
+                videoPlayer.rate = Float(rate)
+            }
+            return
+        }
+
         guard isPlaying else { return }
         var next = currentTime + dt * rate
         if next >= duration {
-            next = 0
+            next = timelineStart
         }
         currentTime = next
     }

@@ -24,8 +24,13 @@ struct ContentView: View {
 
     private var preview: some View {
         ZStack {
-            // Neutral checker-ish backdrop so the transparent HUD is visible.
-            Color(white: 0.16)
+            if model.videoPlayer != nil {
+                VideoPreview(player: model.videoPlayer)
+                    .background(Color.black)
+            } else {
+                // Neutral checker-ish backdrop so the transparent HUD is visible.
+                Color(white: 0.16)
+            }
             HudView(state: model.frameState())
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -40,7 +45,7 @@ struct ContentView: View {
 
                 Slider(
                     value: Binding(get: { model.currentTime }, set: { model.seek(to: $0) }),
-                    in: 0...model.duration
+                    in: model.timelineStart...model.duration
                 )
 
                 Text(formatTimecode(model.currentTime, fps: 60))
@@ -49,6 +54,7 @@ struct ContentView: View {
             }
 
             HStack(spacing: 12) {
+                Button("Open Video…") { openVideo() }
                 Button("Open Telemetry…") { openTelemetry() }
                 Button("Open Track…") { openTrack() }
 
@@ -73,10 +79,20 @@ struct ContentView: View {
 
     private var sourceLabel: String {
         var parts: [String] = []
+        if let t = model.videoName { parts.append("video: \(t)") }
         if let t = model.telemetryName { parts.append("telemetry: \(t)") }
         if let t = model.trackName { parts.append("track: \(t)") }
         if let e = model.lastError { parts.append("⚠︎ \(e)") }
         return parts.isEmpty ? "No sources loaded" : parts.joined(separator: "   ")
+    }
+
+    private func openVideo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.movie, .quickTimeMovie, .mpeg4Movie]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            model.loadVideo(url: url)
+        }
     }
 
     private func openTelemetry() {

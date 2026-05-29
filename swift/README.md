@@ -75,7 +75,8 @@ the export and UI stages depend on.
       perspective+rotateX port (car at 0.72 anchor, road recedes upward)
 - [x] Minimap soft edge fade + teal center glow — CoreGraphics transparency
       mask + stacked radial gradients matching Minimap.tsx
-- [ ] AVPlayer video time source + sync in the app
+- [x] AVPlayer video time source + sync in the app — native video layer behind
+      HUD, shared timeline driven from `AVPlayer.currentTime()`
 - [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
 - [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
 - [ ] Retire the web stack once at parity
