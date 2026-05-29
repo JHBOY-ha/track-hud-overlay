@@ -16,7 +16,8 @@ let package = Package(
     targets: [
         .target(
             name: "HUD5Render",
-            dependencies: [.product(name: "HUD5Core", package: "HUD5Core")]
+            dependencies: [.product(name: "HUD5Core", package: "HUD5Core")],
+            resources: [.process("Fonts")]
         ),
         .executableTarget(
             name: "hud5-export",

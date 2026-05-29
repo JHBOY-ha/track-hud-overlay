@@ -14,10 +14,13 @@ public enum HudRenderer {
     public static let stageWidth: CGFloat = 1920
     public static let stageHeight: CGFloat = 1080
 
-    // Palette (approximate HUD ink + Forza-style accent).
-    private static let ink = CGColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 1)
-    private static let inkFaint = CGColor(red: 0.96, green: 0.96, blue: 0.98, alpha: 0.4)
-    private static let accent = CGColor(red: 1.0, green: 0.84, blue: 0.18, alpha: 1)
+    // Palette — exact ports of src/styles/tokens.css (oklch → sRGB).
+    // --ink: oklch(0.97 0.01 90); --ink-dim: /0.6; --ink-faint: /0.3
+    private static let ink = CGColor(red: 0.971, green: 0.9605, blue: 0.9321, alpha: 1)
+    private static let inkDim = CGColor(red: 0.971, green: 0.9605, blue: 0.9321, alpha: 0.6)
+    private static let inkFaint = CGColor(red: 0.971, green: 0.9605, blue: 0.9321, alpha: 0.3)
+    // --amber: oklch(0.82 0.14 75)
+    private static let accent = CGColor(red: 0.9752, green: 0.7133, blue: 0.3113, alpha: 1)
     private static let track = CGColor(red: 1, green: 1, blue: 1, alpha: 0.16)
     private static let brakeColor = CGColor(red: 0.86, green: 0.30, blue: 0.22, alpha: 1)
 
@@ -267,7 +270,8 @@ public enum HudRenderer {
     private static let redZone = CGColor(red: 0.78, green: 0.13, blue: 0.12, alpha: 0.85)
     private static let throttleColor = CGColor(red: 0.30, green: 0.56, blue: 0.95, alpha: 1)
     private static let activeArc = CGColor(red: 1, green: 1, blue: 1, alpha: 0.9)
-    private static let teal = CGColor(red: 0.36, green: 0.85, blue: 0.78, alpha: 1)
+    // --teal: oklch(0.78 0.11 195)
+    private static let teal = CGColor(red: 0.3093, green: 0.8048, blue: 0.8041, alpha: 1)
 
     /// Build a stroked arc path in SVG-like top-down space, sampled finely and
     /// flipped into the context's bottom-left origin.
@@ -404,7 +408,18 @@ public enum HudRenderer {
     enum Weight { case regular, medium, semibold, bold, black }
     enum Align { case left, center, right }
 
+    /// Register the bundled Archivo + JetBrains Mono variable fonts once, so
+    /// the renderer matches the web app's `--sans` / `--mono` exactly.
+    private static let registerFonts: Void = {
+        for name in ["Archivo", "JetBrainsMono"] {
+            if let url = Bundle.module.url(forResource: name, withExtension: "ttf") {
+                CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+            }
+        }
+    }()
+
     private static func ctFont(size: CGFloat, weight: Weight, mono: Bool) -> CTFont {
+        _ = registerFonts
         let traitWeight: CGFloat
         switch weight {
         case .regular: traitWeight = 0
@@ -413,18 +428,11 @@ public enum HudRenderer {
         case .bold: traitWeight = 0.4
         case .black: traitWeight = 0.62
         }
-        // Pick a base family; fall back gracefully if a name is unavailable.
-        let candidates: [String] = mono
-            ? ["SFMono-Regular", "Menlo", "Courier"]
-            : ["Helvetica Neue", "Helvetica"]
-        var base = CTFontCreateWithName(candidates.last! as CFString, size, nil)
-        for name in candidates {
-            let f = CTFontCreateWithName(name as CFString, size, nil)
-            if (CTFontCopyPostScriptName(f) as String).isEmpty == false {
-                base = f
-                break
-            }
-        }
+        // --sans: Archivo, --mono: JetBrains Mono (variable fonts). Weight is
+        // applied via the standard weight trait, which CoreText maps onto the
+        // font's `wght` variation axis.
+        let family = mono ? "JetBrains Mono" : "Archivo"
+        let base = CTFontCreateWithName(family as CFString, size, nil)
         let traitsDict: [CFString: Any] = [kCTFontWeightTrait: traitWeight]
         let attrs: [CFString: Any] = [kCTFontTraitsAttribute: traitsDict]
         let desc = CTFontDescriptorCreateWithAttributes(attrs as CFDictionary)
