@@ -62,26 +62,103 @@ public enum HudRenderer {
 
     // MARK: Top-left status (elapsed + throttle/brake)
 
+    /// HH:MM:SS.mmm, mirroring formatElapsed in TopLeftStatus.tsx.
+    private static func formatElapsed(_ t: Double) -> String {
+        let tt = max(0, t)
+        let ms = Int((tt - floor(tt)) * 1000)
+        let s = Int(floor(tt)) % 60
+        let m = (Int(floor(tt)) / 60) % 60
+        let h = Int(floor(tt)) / 3600
+        return String(format: "%02d:%02d:%02d.%03d", h, m, s, ms)
+    }
+
     private static func drawTopLeftStatus(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
-        drawText(formatTimecode(state.elapsed, fps: 60), x: 70, yTop: 70, size: 40, color: ink,
-                 ctx: ctx, height: height, align: .left, weight: .semibold, mono: true)
+        let left: CGFloat = 48, top: CGFloat = 36
+        let progress = clamp(state.sample?.progress ?? 0, 0, 1)
+        let pct = Int((progress * 100).rounded())
+
+        drawText("STAGE PROGRESS", x: left, yTop: top, size: 11, color: inkFaint, ctx: ctx,
+                 height: height, align: .left, weight: .medium, mono: true, tracking: 2)
+
+        // Big percent + "%".
+        let numY = top + 24
+        drawText(String(pct), x: left, yTop: numY, size: 48, color: ink, ctx: ctx,
+                 height: height, align: .left, weight: .black, mono: false)
+        let pctW = measure(String(pct), size: 48, weight: .black, mono: false)
+        drawText("%", x: left + pctW + 10, yTop: numY + 30, size: 14, color: inkFaint, ctx: ctx,
+                 height: height, align: .left, weight: .medium, mono: true, tracking: 2)
+
+        // Progress strip (width 300, height 7) with a skewed right edge + ticks.
+        let stripW: CGFloat = 300, stripH: CGFloat = 7
+        let stripTop = numY + 64
+        let stripY = flip(stripTop + stripH, height)  // bottom edge in CG space
+        let skew: CGFloat = 7
+        let poly = CGMutablePath()
+        poly.move(to: CGPoint(x: left, y: stripY + stripH))
+        poly.addLine(to: CGPoint(x: left + stripW, y: stripY + stripH))
+        poly.addLine(to: CGPoint(x: left + stripW - skew, y: stripY))
+        poly.addLine(to: CGPoint(x: left, y: stripY))
+        poly.closeSubpath()
+
+        ctx.saveGState()
+        ctx.addPath(poly)
+        ctx.clip()
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.14))
+        ctx.fill(CGRect(x: left, y: stripY, width: stripW, height: stripH))
+        ctx.setFillColor(accent)
+        ctx.fill(CGRect(x: left, y: stripY, width: stripW * progress, height: stripH))
+        // 10 evenly spaced tick separators.
+        ctx.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 0.35))
+        for i in 0..<10 {
+            let tx = left + stripW * CGFloat(i) / 10
+            ctx.fill(CGRect(x: tx, y: stripY, width: 1, height: stripH))
+        }
+        ctx.restoreGState()
+
+        // Elapsed row.
+        let rowTop = stripTop + stripH + 18
+        drawText("Elapsed", x: left, yTop: rowTop, size: 12, color: inkFaint, ctx: ctx,
+                 height: height, align: .left, weight: .regular, mono: true)
+        drawText(formatElapsed(state.elapsed), x: left + 90, yTop: rowTop, size: 12, color: ink,
+                 ctx: ctx, height: height, align: .left, weight: .medium, mono: true)
     }
 
     // MARK: Top-right position
 
     private static func drawTopRightPosition(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
-        guard let s = state.sample, let cur = s.positionCurrent else { return }
-        let rightX = width - 70
-        let posText: String
-        if let total = s.positionTotal {
-            posText = "\(Int(cur)) / \(Int(total))"
-        } else {
-            posText = "\(Int(cur))"
-        }
-        drawText("POSITION", x: rightX, yTop: 70, size: 22, color: inkFaint, ctx: ctx,
+        let rightX = width - 48
+        let top: CGFloat = 36
+        let cur = Int(state.sample?.positionCurrent ?? 1)
+        let tot = Int(state.sample?.positionTotal ?? 2)
+
+        drawText("GRID POSITION", x: rightX, yTop: top, size: 11, color: inkFaint, ctx: ctx,
+                 height: height, align: .right, weight: .medium, mono: true, tracking: 2)
+
+        // "{cur} / {tot}" — cur big amber, "/ tot" small dim, baseline-aligned.
+        let numY = top + 20
+        let totStr = "/ \(tot)"
+        drawText(totStr, x: rightX, yTop: numY + 50, size: 20, color: inkFaint, ctx: ctx,
                  height: height, align: .right, weight: .medium, mono: true)
-        drawText(posText, x: rightX, yTop: 100, size: 54, color: ink, ctx: ctx,
-                 height: height, align: .right, weight: .bold, mono: true)
+        let totW = measure(totStr, size: 20, weight: .medium, mono: true)
+        drawText(String(cur), x: rightX - totW - 8, yTop: numY, size: 72, color: accent, ctx: ctx,
+                 height: height, align: .right, weight: .black, mono: false)
+
+        // Position pips, right-aligned.
+        let pipW: CGFloat = 14, pipH: CGFloat = 4, gap: CGFloat = 3
+        let totalW = CGFloat(tot) * pipW + CGFloat(max(tot - 1, 0)) * gap
+        let pipsTop = numY + 78
+        let pipY = flip(pipsTop + pipH, height)
+        var px = rightX - totalW
+        for i in 0..<max(tot, 0) {
+            let rank = i + 1
+            let color: CGColor
+            if rank == cur { color = accent }
+            else if rank < cur { color = CGColor(red: 1, green: 1, blue: 1, alpha: 0.45) }
+            else { color = CGColor(red: 1, green: 1, blue: 1, alpha: 0.2) }
+            ctx.setFillColor(color)
+            ctx.fill(CGRect(x: px, y: pipY, width: pipW, height: pipH))
+            px += pipW + gap
+        }
     }
 
     // MARK: Minimap (bottom-left top-down)
@@ -352,6 +429,19 @@ public enum HudRenderer {
         let attrs: [CFString: Any] = [kCTFontTraitsAttribute: traitsDict]
         let desc = CTFontDescriptorCreateWithAttributes(attrs as CFDictionary)
         return CTFontCreateCopyWithAttributes(base, size, nil, desc)
+    }
+
+    /// Typographic width of a string in the given style (for manual layout).
+    private static func measure(_ s: String, size: CGFloat, weight: Weight, mono: Bool, tracking: CGFloat = 0) -> CGFloat {
+        let font = ctFont(size: size, weight: weight, mono: mono)
+        var attrs: [NSAttributedString.Key: Any] = [
+            NSAttributedString.Key(kCTFontAttributeName as String): font
+        ]
+        if tracking != 0 {
+            attrs[NSAttributedString.Key(kCTKernAttributeName as String)] = tracking
+        }
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: s, attributes: attrs) as CFAttributedString)
+        return CGFloat(CTLineGetTypographicBounds(line, nil, nil, nil))
     }
 
     private static func drawText(_ s: String, x: CGFloat, yTop: CGFloat, size: CGFloat,
