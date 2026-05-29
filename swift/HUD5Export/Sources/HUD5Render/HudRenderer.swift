@@ -175,7 +175,7 @@ public enum HudRenderer {
     private static let mmDisc: CGFloat = 240
     private static let mmRadius: CGFloat = 240 / 2 - 12   // 108
     private static let mmViewRadiusM: CGFloat = 50
-    private static let mmStroke: CGFloat = 3
+    private static let mmStroke: CGFloat = 10
     private static let mmLeft: CGFloat = 55
     private static let mmBottom: CGFloat = 63
     private static let mmAnchorFrac: CGFloat = 0.72  // MINIMAP_ANCHOR_Y = DISC*0.72
@@ -191,7 +191,6 @@ public enum HudRenderer {
         // The car sits at 0.72·DISC down the disc; the ground plane tilts back
         // around this anchor so the road ahead recedes upward.
         let anchorYTopDown = discTopTopDown + mmDisc * mmAnchorFrac
-        let anchorCG = CGPoint(x: cxv, y: flip(anchorYTopDown, height))
 
         let planned = state.layers.first { $0.kind == .planned }
         let driven = state.layers.first { $0.kind == .driven } ?? planned
@@ -208,8 +207,29 @@ public enum HudRenderer {
                  height: height, align: .right, weight: .medium, mono: true, tracking: 2)
 
         // Disc background — stacked CSS gradients from Minimap.tsx:
-        // teal ellipse at 50% 34%, plus the dark radial disc fade.
+        // dark radial disc fade underneath, teal ellipse at 50% 34% on top,
+        // then MAP_ALPHA_MASK applied to the whole background layer.
         let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        ctx.saveGState()
+        ctx.setShadow(offset: CGSize(width: 0, height: -2), blur: 10, color: CGColor(gray: 0, alpha: 0.6))
+        ctx.addEllipse(in: CGRect(
+            x: centerCG.x - mmDisc / 2,
+            y: centerCG.y - mmDisc / 2,
+            width: mmDisc,
+            height: mmDisc
+        ))
+        ctx.clip()
+        ctx.beginTransparencyLayer(auxiliaryInfo: nil)
+
+        let comps: [CGFloat] = [
+            0.039, 0.047, 0.055, 0.42,
+            0.039, 0.047, 0.055, 0.24,
+            0.039, 0.047, 0.055, 0.0,
+        ]
+        if let grad = CGGradient(colorSpace: cs, colorComponents: comps, locations: [0, 0.48, 0.84], count: 3) {
+            ctx.drawRadialGradient(grad, startCenter: centerCG, startRadius: 0,
+                                   endCenter: centerCG, endRadius: mmDisc / 2, options: [])
+        }
         if let glow = CGGradient(
             colorSpace: cs,
             colorComponents: [
@@ -220,14 +240,6 @@ public enum HudRenderer {
             locations: [0, 0.34, 0.62],
             count: 3
         ) {
-            ctx.saveGState()
-            ctx.addEllipse(in: CGRect(
-                x: centerCG.x - mmDisc / 2,
-                y: centerCG.y - mmDisc / 2,
-                width: mmDisc,
-                height: mmDisc
-            ))
-            ctx.clip()
             let glowCenter = CGPoint(x: cxv, y: flip(discTopTopDown + mmDisc * 0.34, height))
             drawEllipticalRadialGradient(
                 glow,
@@ -236,20 +248,21 @@ public enum HudRenderer {
                 yScale: 0.58,
                 ctx: ctx
             )
-            ctx.restoreGState()
         }
-        let comps: [CGFloat] = [
-            0.039, 0.047, 0.055, 0.42,
-            0.039, 0.047, 0.055, 0.24,
-            0.039, 0.047, 0.055, 0.0,
-        ]
-        if let grad = CGGradient(colorSpace: cs, colorComponents: comps, locations: [0, 0.48, 0.84], count: 3) {
-            ctx.saveGState()
-            ctx.setShadow(offset: CGSize(width: 0, height: -2), blur: 10, color: CGColor(gray: 0, alpha: 0.6))
-            ctx.drawRadialGradient(grad, startCenter: centerCG, startRadius: 0,
-                                   endCenter: centerCG, endRadius: mmDisc / 2, options: [])
-            ctx.restoreGState()
-        }
+        applyRadialAlphaMask(
+            ctx,
+            center: centerCG,
+            radius: mmDisc / 2,
+            stops: [
+                (0.00, 1.0),
+                (0.38, 1.0),
+                (0.56, 0.74),
+                (0.74, 0.28),
+                (0.96, 0.0),
+            ]
+        )
+        ctx.endTransparencyLayer()
+        ctx.restoreGState()
 
         // Map content, clipped to the inner ring (radius DISC/2 - 10).
         let innerR = mmDisc / 2 - 10
@@ -320,6 +333,9 @@ public enum HudRenderer {
                 ctx.setFillColor(ink)
                 ctx.fillEllipse(in: CGRect(x: f.x - 1.5, y: f.y - 1.5, width: 3, height: 3))
             }
+
+            drawCarArrow(at: CGPoint(x: cxv, y: flip(anchorYTopDown, height)), ctx: ctx)
+
             // MAP_CONTENT_MASK: fully visible through the middle, then fades
             // softly before the inner ring edge.
             applyRadialAlphaMask(
@@ -342,9 +358,6 @@ public enum HudRenderer {
         ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.18))
         ctx.setLineWidth(1)
         ctx.strokeEllipse(in: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2))
-
-        // Car arrow at the anchor (untilted), pointing up.
-        if state.pose != nil { drawCarArrow(at: anchorCG, ctx: ctx) }
 
         // Compass N — screen-facing, on the far arc toward true north.
         if let pose = state.pose {
@@ -380,7 +393,7 @@ public enum HudRenderer {
         drawText("\(state.playerName) · \(posStr)", x: mmLeft + 16, yTop: rowY, size: 10, color: ink,
                  ctx: ctx, height: height, align: .left, weight: .medium, mono: true, tracking: 1.5)
         let altLabel: String
-        if let ele = state.pose?.ele, ele.isFinite { altLabel = "\(Int(ele.rounded()))m" } else { altLabel = "— m" }
+        if let ele = state.pose?.ele, ele.isFinite { altLabel = "\(Int(ele.rounded()))M" } else { altLabel = "— M" }
         drawText("ALT · \(altLabel)", x: mmLeft + mmDisc, yTop: rowY, size: 10, color: inkDim, ctx: ctx,
                  height: height, align: .right, weight: .medium, mono: true, tracking: 1.5)
     }
@@ -455,30 +468,63 @@ public enum HudRenderer {
     }
 
     /// The detailed car arrow from Minimap.tsx (scale 0.7), pointing up.
-    /// SVG path "M 0 -70 L 15 36 L 0 21 L -15 36 Z" (y-down) → CG with y negated.
+    /// SVG y-down coordinates are converted to CoreGraphics y-up coordinates.
     private static func drawCarArrow(at p: CGPoint, ctx: CGContext) {
         let s: CGFloat = 0.7
+
         func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-            CGPoint(x: p.x + x * s, y: p.y - y * s)  // negate y: SVG up(-) → CG up(+)
+            CGPoint(x: p.x + x * s, y: p.y - y * s)
         }
+
+        func path(_ points: [(CGFloat, CGFloat)], close: Bool = true) -> CGMutablePath {
+            let p = CGMutablePath()
+            guard let first = points.first else { return p }
+            p.move(to: pt(first.0, first.1))
+            for point in points.dropFirst() {
+                p.addLine(to: pt(point.0, point.1))
+            }
+            if close { p.closeSubpath() }
+            return p
+        }
+
+        let bodyPoints: [(CGFloat, CGFloat)] = [(0, -70), (15, 36), (0, 21), (-15, 36)]
+        let shadowPoints = bodyPoints.map { ($0.0, $0.1 + 6) }
+        let innerPoints: [(CGFloat, CGFloat)] = [(0, -58), (8.8, 22), (0, 13), (-8.8, 22)]
+
         ctx.saveGState()
-        ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 3, color: CGColor(red: 0.09, green: 0.07, blue: 0.13, alpha: 0.76))
-        // Main body.
-        let body = CGMutablePath()
-        body.move(to: pt(0, -70)); body.addLine(to: pt(15, 36)); body.addLine(to: pt(0, 21)); body.addLine(to: pt(-15, 36)); body.closeSubpath()
-        ctx.addPath(body)
-        ctx.setFillColor(CGColor(red: 0.973, green: 0.969, blue: 1.0, alpha: 1))
+        ctx.addPath(path(shadowPoints))
+        ctx.setFillColor(CGColor(red: 0.086, green: 0.067, blue: 0.125, alpha: 0.36 * 0.78))
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        ctx.saveGState()
+        ctx.setShadow(
+            offset: CGSize(width: 0, height: -2.2),
+            blur: 1.6,
+            color: CGColor(red: 0.09, green: 0.07, blue: 0.13, alpha: 0.76)
+        )
+        ctx.addPath(path(bodyPoints))
+        ctx.setFillColor(CGColor(red: 0.973, green: 0.969, blue: 1, alpha: 1))
         ctx.setStrokeColor(CGColor(red: 0.145, green: 0.118, blue: 0.204, alpha: 0.95))
         ctx.setLineWidth(4.6 * s)
         ctx.setLineJoin(.round)
+        ctx.setLineCap(.round)
         ctx.drawPath(using: .fillStroke)
         ctx.restoreGState()
-        // Inner highlight.
-        let inner = CGMutablePath()
-        inner.move(to: pt(0, -58)); inner.addLine(to: pt(8.8, 22)); inner.addLine(to: pt(0, 13)); inner.addLine(to: pt(-8.8, 22)); inner.closeSubpath()
-        ctx.addPath(inner)
+
+        ctx.addPath(path(innerPoints))
         ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.44))
-        ctx.fillPath()
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.78))
+        ctx.setLineWidth(1.45 * s)
+        ctx.setLineJoin(.round)
+        ctx.drawPath(using: .fillStroke)
+
+        let chevron = path([(-11.6, 31.5), (0, 20.7), (11.6, 31.5)], close: false)
+        ctx.addPath(chevron)
+        ctx.setStrokeColor(CGColor(red: 0.243, green: 0.204, blue: 0.337, alpha: 0.68))
+        ctx.setLineWidth(2 * s)
+        ctx.setLineCap(.round)
+        ctx.strokePath()
     }
 
     // MARK: Speedometer (open-bottom gauge, bottom-right)
