@@ -310,6 +310,27 @@ public enum HudRenderer {
         let boxTopDown = height - 45 - gaugeSize
         let cx = boxLeft + gaugeSize / 2
         let cy = boxTopDown + gaugeSize / 2  // top-down center
+        let center = CGPoint(x: cx, y: flip(cy, height))
+
+        // Dark translucent disc backing — radial-gradient(circle,
+        // rgba(10,12,14,0.4) 0%, …0.2 55%, …0 72%) from Speedometer.tsx, with
+        // the gauge's drop-shadow(0 4px 16px rgba(0,0,0,0.7)).
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let comps: [CGFloat] = [
+            0.039, 0.047, 0.055, 0.40,
+            0.039, 0.047, 0.055, 0.20,
+            0.039, 0.047, 0.055, 0.0,
+            0.039, 0.047, 0.055, 0.0,
+        ]
+        let locs: [CGFloat] = [0, 0.55, 0.72, 1.0]
+        if let grad = CGGradient(colorSpace: cs, colorComponents: comps, locations: locs, count: 4) {
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -4), blur: 16,
+                          color: CGColor(gray: 0, alpha: 0.7))
+            ctx.drawRadialGradient(grad, startCenter: center, startRadius: 0,
+                                   endCenter: center, endRadius: gaugeSize / 2, options: [])
+            ctx.restoreGState()
+        }
 
         // Concentric guide rings.
         for (r, a) in [(gaugeR + 16, 0.06), (gaugeR + 8, 0.12), (gaugeR - 22, 0.08)] {
