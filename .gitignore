@@ -6,3 +6,4 @@ out
 tsconfig.tsbuildinfo
 local
 output
+.vscode
