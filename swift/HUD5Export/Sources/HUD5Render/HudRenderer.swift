@@ -164,65 +164,170 @@ public enum HudRenderer {
         }
     }
 
-    // MARK: Minimap (bottom-left top-down)
+    // MARK: Minimap
+    //
+    // Faithful port of src/hud/Minimap.tsx (flat mode — the web's tilt=0
+    // setting): a DISC=240 disc anchored bottom-left showing a viewRadiusM=50
+    // window centered on the car, rotated heading-up, with reference/planned/
+    // driven layers, an outer ring, a compass N, a scale bar, and the route/
+    // player/altitude labels. The 70° perspective tilt is a later step.
+
+    private static let mmDisc: CGFloat = 240
+    private static let mmRadius: CGFloat = 240 / 2 - 12   // 108
+    private static let mmViewRadiusM: CGFloat = 50
+    private static let mmStroke: CGFloat = 3
+    private static let mmLeft: CGFloat = 55
+    private static let mmBottom: CGFloat = 63
 
     private static func drawMinimap(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
-        let pts = state.trackPoints
-        guard pts.count >= 2 else { return }
+        let mToPx = mmRadius / mmViewRadiusM
+        let discTopTopDown = height - mmBottom - mmDisc
+        let cxv = mmLeft + mmDisc / 2
+        let cyTopDown = discTopTopDown + mmDisc / 2
+        let centerCG = CGPoint(x: cxv, y: flip(cyTopDown, height))
 
-        let boxX: CGFloat = 70, boxYTop: CGFloat = height - 70 - 320
-        let boxW: CGFloat = 320, boxH: CGFloat = 320, pad: CGFloat = 24
+        let planned = state.layers.first { $0.kind == .planned }
+        let driven = state.layers.first { $0.kind == .driven } ?? planned
+        let references = state.layers.filter { $0.kind == .reference }
+        let routeLayer = planned ?? driven
+        let trackLenM = routeLayer?.totalLength ?? 0
 
-        var minX = pts[0].x, maxX = pts[0].x, minY = pts[0].y, maxY = pts[0].y
-        for p in pts {
-            minX = min(minX, p.x); maxX = max(maxX, p.x)
-            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        // Header: ROUTE · TRACK   X.XX KM
+        let headerY = discTopTopDown - 22
+        drawText("ROUTE · TRACK", x: mmLeft, yTop: headerY, size: 10, color: inkDim, ctx: ctx,
+                 height: height, align: .left, weight: .medium, mono: true, tracking: 2)
+        let distLabel = trackLenM > 0 ? String(format: "%.2f KM", trackLenM / 1000) : "— KM"
+        drawText(distLabel, x: mmLeft + mmDisc, yTop: headerY, size: 10, color: inkDim, ctx: ctx,
+                 height: height, align: .right, weight: .medium, mono: true, tracking: 2)
+
+        // Disc background — dark radial fade (port of the stacked gradients +
+        // alpha mask, simplified to one dark fade).
+        let cs = CGColorSpace(name: CGColorSpace.sRGB)!
+        let comps: [CGFloat] = [
+            0.039, 0.047, 0.055, 0.42,
+            0.039, 0.047, 0.055, 0.24,
+            0.039, 0.047, 0.055, 0.0,
+        ]
+        if let grad = CGGradient(colorSpace: cs, colorComponents: comps, locations: [0, 0.48, 0.84], count: 3) {
+            ctx.saveGState()
+            ctx.setShadow(offset: CGSize(width: 0, height: -2), blur: 10, color: CGColor(gray: 0, alpha: 0.6))
+            ctx.drawRadialGradient(grad, startCenter: centerCG, startRadius: 0,
+                                   endCenter: centerCG, endRadius: mmDisc / 2, options: [])
+            ctx.restoreGState()
         }
-        let spanX = max(maxX - minX, 1e-6), spanY = max(maxY - minY, 1e-6)
-        let scale = min((boxW - pad * 2) / spanX, (boxH - pad * 2) / spanY)
-        // Center the track in the box.
-        let offX = boxX + (boxW - spanX * scale) / 2
-        let offYTop = boxYTop + (boxH - spanY * scale) / 2
 
-        // Track point (meters, y-down) → context point (bottom-left origin).
-        func map(_ x: Double, _ y: Double) -> CGPoint {
-            let sx = offX + (CGFloat(x) - CGFloat(minX)) * scale
-            let syTop = offYTop + (CGFloat(y) - CGFloat(minY)) * scale
-            return CGPoint(x: sx, y: flip(syTop, height))
+        // Map content, clipped to the inner ring (radius DISC/2 - 10).
+        let innerR = mmDisc / 2 - 10
+        if let pose = state.pose {
+            let a = -pose.headingRad  // mapAngle = -headingDeg, heading-up
+            let cosA = cos(a), sinA = sin(a)
+            func mapPoint(_ x: Double, _ y: Double) -> CGPoint {
+                let sx = (CGFloat(x) - CGFloat(pose.x)) * mToPx
+                let sy = (CGFloat(y) - CGFloat(pose.y)) * mToPx
+                let rx = sx * cosA - sy * sinA
+                let ry = sx * sinA + sy * cosA
+                return CGPoint(x: cxv + rx, y: flip(cyTopDown + ry, height))
+            }
+            func strokeLayer(_ pts: [TrackPoint], _ color: CGColor, _ wPx: CGFloat) {
+                guard pts.count > 1 else { return }
+                ctx.setStrokeColor(color)
+                ctx.setLineWidth(wPx)
+                ctx.setLineCap(.round)
+                ctx.setLineJoin(.round)
+                ctx.beginPath()
+                ctx.move(to: mapPoint(pts[0].x, pts[0].y))
+                for p in pts.dropFirst() { ctx.addLine(to: mapPoint(p.x, p.y)) }
+                ctx.strokePath()
+            }
+
+            ctx.saveGState()
+            ctx.addEllipse(in: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2))
+            ctx.clip()
+
+            for ref in references { strokeLayer(ref.points, CGColor(red: 1, green: 1, blue: 1, alpha: 0.18), mmStroke) }
+            if let planned { strokeLayer(planned.points, withAlpha(teal, 0.45), mmStroke) }
+
+            // Driven split at the car: walked (amber) trails behind, ahead
+            // (teal) continues — only shown when there's no planned route.
+            if let driven {
+                let poseDist = nearestDistance(driven.points, pose)
+                var walked = driven.points.filter { $0.distance <= poseDist }
+                walked.append(TrackPoint(x: pose.x, y: pose.y, distance: poseDist))
+                var ahead = [TrackPoint(x: pose.x, y: pose.y, distance: poseDist)]
+                ahead.append(contentsOf: driven.points.filter { $0.distance > poseDist })
+                if planned == nil { strokeLayer(ahead, withAlpha(teal, 0.55), mmStroke) }
+                strokeLayer(walked, accent, mmStroke)
+            }
+
+            // Finish marker at the route end.
+            if let last = (planned ?? driven)?.points.last {
+                let f = mapPoint(last.x, last.y)
+                ctx.setStrokeColor(ink); ctx.setLineWidth(1.5)
+                ctx.strokeEllipse(in: CGRect(x: f.x - 4, y: f.y - 4, width: 8, height: 8))
+                ctx.setFillColor(ink)
+                ctx.fillEllipse(in: CGRect(x: f.x - 1.5, y: f.y - 1.5, width: 3, height: 3))
+            }
+            ctx.restoreGState()
         }
 
-        // Track polyline.
-        ctx.setStrokeColor(track)
-        ctx.setLineWidth(3)
-        ctx.setLineJoin(.round)
+        // Outer ring.
+        ctx.setStrokeColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.18))
+        ctx.setLineWidth(1)
+        ctx.strokeEllipse(in: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2))
+
+        // Car arrow at center, pointing up (the map rotates beneath it).
+        if state.pose != nil { drawCarArrow(at: centerCG, ctx: ctx) }
+
+        // Compass N — screen-facing, on the far arc toward true north.
+        if let pose = state.pose {
+            let a = -pose.headingRad
+            let nR = mmDisc / 2 - 22
+            let nxTopDown = cxv + sin(a) * nR
+            let nyTopDown = cyTopDown - cos(a) * nR
+            drawText("N", x: nxTopDown, yTop: nyTopDown - 7, size: 11, color: accent, ctx: ctx,
+                     height: height, align: .center, weight: .bold, mono: true, baselineCenter: true, tracking: 1.5)
+        }
+
+        // Scale bar (fixed): 25 M etc.
+        let scaleM = pickScaleBarMeters(mToPx)
+        let scaleBarPx = scaleM * mToPx
+        let barY = flip(discTopTopDown + mmDisc - 18, height)
+        let barX0 = cxv - scaleBarPx / 2
+        ctx.setStrokeColor(ink); ctx.setLineWidth(1.5)
         ctx.beginPath()
-        ctx.move(to: map(pts[0].x, pts[0].y))
-        for p in pts.dropFirst() { ctx.addLine(to: map(p.x, p.y)) }
+        ctx.move(to: CGPoint(x: barX0, y: barY)); ctx.addLine(to: CGPoint(x: barX0 + scaleBarPx, y: barY))
+        ctx.move(to: CGPoint(x: barX0, y: barY - 3)); ctx.addLine(to: CGPoint(x: barX0, y: barY + 3))
+        ctx.move(to: CGPoint(x: barX0 + scaleBarPx, y: barY - 3)); ctx.addLine(to: CGPoint(x: barX0 + scaleBarPx, y: barY + 3))
         ctx.strokePath()
+        let scaleLabel = scaleM >= 1000 ? "\(Int(scaleM / 1000)) KM" : "\(Int(scaleM)) M"
+        drawText(scaleLabel, x: cxv, yTop: discTopTopDown + mmDisc - 18 - 16, size: 9, color: inkDim,
+                 ctx: ctx, height: height, align: .center, weight: .regular, mono: true, tracking: 1.5)
 
-        // Driven-progress overlay up to the current pose, then the car arrow.
-        guard let pose = state.pose else { return }
-        ctx.setStrokeColor(accent)
-        ctx.setLineWidth(4)
-        ctx.beginPath()
-        ctx.move(to: map(pts[0].x, pts[0].y))
-        for p in pts {
-            // Truncate at the interpolated current position (see CLAUDE.md:
-            // the driven bar must not lead the arrow).
-            if p.distance > poseDistance(pts, pose) { break }
-            ctx.addLine(to: map(p.x, p.y))
-        }
-        ctx.addLine(to: map(pose.x, pose.y))
-        ctx.strokePath()
-
-        drawCarArrow(at: map(pose.x, pose.y), headingRad: pose.headingRad, ctx: ctx)
+        // Player / altitude row below the disc.
+        let rowY = height - 51
+        let posStr = state.sample?.positionCurrent.map { "P\(Int($0))" } ?? "P—"
+        // amber square + "NAME · P#"
+        ctx.setFillColor(accent)
+        ctx.fill(CGRect(x: mmLeft, y: flip(rowY + 8, height), width: 8, height: 8))
+        drawText("\(state.playerName) · \(posStr)", x: mmLeft + 16, yTop: rowY, size: 10, color: ink,
+                 ctx: ctx, height: height, align: .left, weight: .medium, mono: true, tracking: 1.5)
+        let altLabel: String
+        if let ele = state.pose?.ele, ele.isFinite { altLabel = "\(Int(ele.rounded()))m" } else { altLabel = "— m" }
+        drawText("ALT · \(altLabel)", x: mmLeft + mmDisc, yTop: rowY, size: 10, color: inkDim, ctx: ctx,
+                 height: height, align: .right, weight: .medium, mono: true, tracking: 1.5)
     }
 
-    /// Distance along the polyline of the point nearest the pose, used to
-    /// truncate the driven overlay.
-    private static func poseDistance(_ pts: [TrackPoint], _ pose: TrackPose) -> Double {
-        var best = Double.infinity
-        var bestDist = 0.0
+    /// Scale-bar step matching pickScaleBarMeters in Minimap.tsx.
+    private static func pickScaleBarMeters(_ mToPx: CGFloat) -> CGFloat {
+        let targetM = mmRadius * 0.55 / mToPx
+        let steps: [CGFloat] = [10, 20, 25, 50, 100, 200, 250, 500, 1000]
+        var best = steps[0]
+        for s in steps where s <= targetM { best = s }
+        return best
+    }
+
+    private static func nearestDistance(_ pts: [TrackPoint], _ pose: TrackPose) -> Double {
+        var best = Double.infinity, bestDist = 0.0
         for p in pts {
             let dx = p.x - pose.x, dy = p.y - pose.y
             let d2 = dx * dx + dy * dy
@@ -231,21 +336,35 @@ public enum HudRenderer {
         return bestDist
     }
 
-    private static func drawCarArrow(at p: CGPoint, headingRad: Double, ctx: CGContext) {
+    private static func withAlpha(_ c: CGColor, _ a: CGFloat) -> CGColor {
+        c.copy(alpha: a) ?? c
+    }
+
+    /// The detailed car arrow from Minimap.tsx (scale 0.7), pointing up.
+    /// SVG path "M 0 -70 L 15 36 L 0 21 L -15 36 Z" (y-down) → CG with y negated.
+    private static func drawCarArrow(at p: CGPoint, ctx: CGContext) {
+        let s: CGFloat = 0.7
+        func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
+            CGPoint(x: p.x + x * s, y: p.y - y * s)  // negate y: SVG up(-) → CG up(+)
+        }
         ctx.saveGState()
-        ctx.translateBy(x: p.x, y: p.y)
-        // heading: 0 = north (up, +y in screen-top terms). Context is
-        // bottom-left, so north is -y here; rotate clockwise by heading.
-        ctx.rotate(by: -headingRad)
-        ctx.beginPath()
-        ctx.move(to: CGPoint(x: 0, y: 13))
-        ctx.addLine(to: CGPoint(x: 9, y: -10))
-        ctx.addLine(to: CGPoint(x: 0, y: -4))
-        ctx.addLine(to: CGPoint(x: -9, y: -10))
-        ctx.closePath()
-        ctx.setFillColor(accent)
-        ctx.fillPath()
+        ctx.setShadow(offset: CGSize(width: 0, height: -3), blur: 3, color: CGColor(red: 0.09, green: 0.07, blue: 0.13, alpha: 0.76))
+        // Main body.
+        let body = CGMutablePath()
+        body.move(to: pt(0, -70)); body.addLine(to: pt(15, 36)); body.addLine(to: pt(0, 21)); body.addLine(to: pt(-15, 36)); body.closeSubpath()
+        ctx.addPath(body)
+        ctx.setFillColor(CGColor(red: 0.973, green: 0.969, blue: 1.0, alpha: 1))
+        ctx.setStrokeColor(CGColor(red: 0.145, green: 0.118, blue: 0.204, alpha: 0.95))
+        ctx.setLineWidth(4.6 * s)
+        ctx.setLineJoin(.round)
+        ctx.drawPath(using: .fillStroke)
         ctx.restoreGState()
+        // Inner highlight.
+        let inner = CGMutablePath()
+        inner.move(to: pt(0, -58)); inner.addLine(to: pt(8.8, 22)); inner.addLine(to: pt(0, 13)); inner.addLine(to: pt(-8.8, 22)); inner.closeSubpath()
+        ctx.addPath(inner)
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.44))
+        ctx.fillPath()
     }
 
     // MARK: Speedometer (open-bottom gauge, bottom-right)

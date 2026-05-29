@@ -24,6 +24,7 @@ struct Args {
     var telemetryOffset = 0.0
     var trackOffset = 0.0
     var snapMaxDist = 0.0
+    var player = "ANNA"
 }
 
 func parseArgs() -> Args {
@@ -44,6 +45,7 @@ func parseArgs() -> Args {
         case "--telemetry-offset": a.telemetryOffset = next().flatMap(Double.init) ?? 0
         case "--track-offset": a.trackOffset = next().flatMap(Double.init) ?? 0
         case "--snap": a.snapMaxDist = next().flatMap(Double.init) ?? 0
+        case "--player": a.player = next() ?? a.player
         case "-h", "--help":
             printUsage(); exit(0)
         default:
@@ -119,7 +121,8 @@ let builder = FrameStateBuilder(
     unit: args.unit,
     telemetryOffset: args.telemetryOffset,
     trackOffset: args.trackOffset,
-    rangeStart: args.start
+    rangeStart: args.start,
+    playerName: args.player
 )
 
 let outURL = URL(fileURLWithPath: args.out)

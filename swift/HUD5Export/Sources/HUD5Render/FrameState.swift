@@ -14,6 +14,9 @@ public struct FrameState: Sendable {
 
     /// Whole projected track (primary layer) for the minimap, with its bounds.
     public var trackPoints: [TrackPoint]
+    /// All categorized layers (reference/planned/driven) for the minimap.
+    public var layers: [TrackLayer]
+    public var playerName: String
 
     public init(
         unit: SpeedUnit,
@@ -21,7 +24,9 @@ public struct FrameState: Sendable {
         elapsed: Double,
         sample: TelemetrySample?,
         pose: TrackPose?,
-        trackPoints: [TrackPoint]
+        trackPoints: [TrackPoint],
+        layers: [TrackLayer] = [],
+        playerName: String = "ANNA"
     ) {
         self.unit = unit
         self.rpmMax = rpmMax
@@ -29,6 +34,8 @@ public struct FrameState: Sendable {
         self.sample = sample
         self.pose = pose
         self.trackPoints = trackPoints
+        self.layers = layers
+        self.playerName = playerName
     }
 }
 
@@ -43,6 +50,7 @@ public struct FrameStateBuilder: Sendable {
     public var telemetryTrimStart: Double
     public var telemetryTrimEnd: Double
     public var rangeStart: Double
+    public var playerName: String
 
     public init(
         telemetry: TelemetryTrack?,
@@ -52,7 +60,8 @@ public struct FrameStateBuilder: Sendable {
         trackOffset: Double = 0,
         telemetryTrimStart: Double = 0,
         telemetryTrimEnd: Double = 0,
-        rangeStart: Double = 0
+        rangeStart: Double = 0,
+        playerName: String = "ANNA"
     ) {
         self.telemetry = telemetry
         self.track = track
@@ -62,6 +71,7 @@ public struct FrameStateBuilder: Sendable {
         self.telemetryTrimStart = telemetryTrimStart
         self.telemetryTrimEnd = telemetryTrimEnd
         self.rangeStart = rangeStart
+        self.playerName = playerName
     }
 
     /// Build the frame state at an absolute playhead time on the shared axis.
@@ -87,7 +97,9 @@ public struct FrameStateBuilder: Sendable {
             elapsed: currentTime - rangeStart,
             sample: sample,
             pose: pose,
-            trackPoints: track?.points ?? []
+            trackPoints: track?.points ?? [],
+            layers: track?.layers ?? [],
+            playerName: playerName
         )
     }
 }
