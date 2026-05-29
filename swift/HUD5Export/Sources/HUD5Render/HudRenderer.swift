@@ -178,6 +178,9 @@ public enum HudRenderer {
     private static let mmStroke: CGFloat = 3
     private static let mmLeft: CGFloat = 55
     private static let mmBottom: CGFloat = 63
+    private static let mmAnchorFrac: CGFloat = 0.72  // MINIMAP_ANCHOR_Y = DISC*0.72
+    private static let mmTiltDeg: CGFloat = 70       // MINIMAP_PLANE_TILT_DEG
+    private static let mmPerspective: CGFloat = 760  // perspective(760px)
 
     private static func drawMinimap(_ state: FrameState, _ ctx: CGContext, width: CGFloat, height: CGFloat) {
         let mToPx = mmRadius / mmViewRadiusM
@@ -185,6 +188,10 @@ public enum HudRenderer {
         let cxv = mmLeft + mmDisc / 2
         let cyTopDown = discTopTopDown + mmDisc / 2
         let centerCG = CGPoint(x: cxv, y: flip(cyTopDown, height))
+        // The car sits at 0.72·DISC down the disc; the ground plane tilts back
+        // around this anchor so the road ahead recedes upward.
+        let anchorYTopDown = discTopTopDown + mmDisc * mmAnchorFrac
+        let anchorCG = CGPoint(x: cxv, y: flip(anchorYTopDown, height))
 
         let planned = state.layers.first { $0.kind == .planned }
         let driven = state.layers.first { $0.kind == .driven } ?? planned
@@ -221,12 +228,25 @@ public enum HudRenderer {
         if let pose = state.pose {
             let a = -pose.headingRad  // mapAngle = -headingDeg, heading-up
             let cosA = cos(a), sinA = sin(a)
-            func mapPoint(_ x: Double, _ y: Double) -> CGPoint {
-                let sx = (CGFloat(x) - CGFloat(pose.x)) * mToPx
-                let sy = (CGFloat(y) - CGFloat(pose.y)) * mToPx
-                let rx = sx * cosA - sy * sinA
-                let ry = sx * sinA + sy * cosA
-                return CGPoint(x: cxv + rx, y: flip(cyTopDown + ry, height))
+            let tilt = mmTiltDeg * .pi / 180
+            let cosT = cos(tilt), sinT = sin(tilt)
+            // Port of `perspective(760px) rotateX(70deg)` about the anchor:
+            // rotate the plane point about the horizontal axis (y-z), then
+            // project with the CSS perspective scale P/(P - z).
+            // Returns nil when the point falls at/behind the perspective
+            // horizon (z ≥ camera), so callers can break the polyline there.
+            func mapPoint(_ x: Double, _ y: Double) -> CGPoint? {
+                let mx = (CGFloat(x) - CGFloat(pose.x)) * mToPx
+                let my = (CGFloat(y) - CGFloat(pose.y)) * mToPx
+                let rx = mx * cosA - my * sinA           // heading-up rotation
+                let ry = mx * sinA + my * cosA           // (plane, y-down)
+                let zt = ry * sinT                        // depth after tilt
+                let denom = mmPerspective - zt
+                if denom <= 1 { return nil }              // behind the camera
+                let s = mmPerspective / denom
+                let px = rx * s
+                let py = (ry * cosT) * s
+                return CGPoint(x: cxv + px, y: flip(anchorYTopDown + py, height))
             }
             func strokeLayer(_ pts: [TrackPoint], _ color: CGColor, _ wPx: CGFloat) {
                 guard pts.count > 1 else { return }
@@ -234,9 +254,14 @@ public enum HudRenderer {
                 ctx.setLineWidth(wPx)
                 ctx.setLineCap(.round)
                 ctx.setLineJoin(.round)
-                ctx.beginPath()
-                ctx.move(to: mapPoint(pts[0].x, pts[0].y))
-                for p in pts.dropFirst() { ctx.addLine(to: mapPoint(p.x, p.y)) }
+                var penDown = false
+                for p in pts {
+                    if let cg = mapPoint(p.x, p.y) {
+                        if penDown { ctx.addLine(to: cg) } else { ctx.move(to: cg); penDown = true }
+                    } else {
+                        penDown = false  // break the path at the horizon
+                    }
+                }
                 ctx.strokePath()
             }
 
@@ -260,8 +285,7 @@ public enum HudRenderer {
             }
 
             // Finish marker at the route end.
-            if let last = (planned ?? driven)?.points.last {
-                let f = mapPoint(last.x, last.y)
+            if let last = (planned ?? driven)?.points.last, let f = mapPoint(last.x, last.y) {
                 ctx.setStrokeColor(ink); ctx.setLineWidth(1.5)
                 ctx.strokeEllipse(in: CGRect(x: f.x - 4, y: f.y - 4, width: 8, height: 8))
                 ctx.setFillColor(ink)
@@ -275,8 +299,8 @@ public enum HudRenderer {
         ctx.setLineWidth(1)
         ctx.strokeEllipse(in: CGRect(x: centerCG.x - innerR, y: centerCG.y - innerR, width: innerR * 2, height: innerR * 2))
 
-        // Car arrow at center, pointing up (the map rotates beneath it).
-        if state.pose != nil { drawCarArrow(at: centerCG, ctx: ctx) }
+        // Car arrow at the anchor (untilted), pointing up.
+        if state.pose != nil { drawCarArrow(at: anchorCG, ctx: ctx) }
 
         // Compass N — screen-facing, on the far arc toward true north.
         if let pose = state.pose {
