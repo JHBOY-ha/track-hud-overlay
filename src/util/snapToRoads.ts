@@ -105,18 +105,95 @@ function projectOnto(s: Segment2D, px: number, py: number): Projection {
   return { sx, sy, d2: ddx * ddx + ddy * ddy };
 }
 
-// Snap each point onto the nearest reference segment when within maxDistM.
-//
-// Two heuristics keep junctions stable:
-//   1. Sticky way: once a point has snapped to OSM way W, subsequent
-//      points stay on W unless the best off-way candidate is meaningfully
-//      closer (by ratio AND absolute margin). Prevents flicker into short
-//      side branches that pass within snap distance.
-//   2. Smoothing pass: short wrong-way islands surrounded by the same
-//      neighbour way are reassigned back if that neighbour way is reachable
-//      within maxDistM for the whole island.
-//
-// Points beyond maxDistM keep their original position.
+/** A candidate match for one GPS point: its projection onto one OSM way. */
+interface Candidate {
+  wayId: number; // -1 == off-road (point kept at its raw position)
+  x: number;
+  y: number;
+  d2: number; // squared distance from the raw point to this projection
+}
+
+/**
+ * Uniform spatial grid over the segment set, so candidate lookup for a point
+ * is O(segments in nearby cells) instead of O(all segments). Each segment is
+ * rasterised into every cell its body passes through (plus its endpoints), so
+ * a query of the point's cell and its 8 neighbours is guaranteed to surface
+ * any segment whose nearest point lies within one cell (= maxDistM).
+ */
+class SegmentGrid {
+  private readonly cell: number;
+  private readonly buckets = new Map<string, Segment2D[]>();
+  private static key(cx: number, cy: number): string {
+    return cx + ',' + cy;
+  }
+
+  constructor(segments: Segment2D[], cellSize: number) {
+    this.cell = cellSize;
+    for (const s of segments) this.insert(s);
+  }
+
+  private add(cx: number, cy: number, s: Segment2D): void {
+    const k = SegmentGrid.key(cx, cy);
+    let arr = this.buckets.get(k);
+    if (!arr) this.buckets.set(k, (arr = []));
+    arr.push(s);
+  }
+
+  private insert(s: Segment2D): void {
+    const c = this.cell;
+    const ax = s.ax, ay = s.ay, bx = s.ax + s.dx, by = s.ay + s.dy;
+    const len = Math.sqrt(s.len2);
+    const steps = Math.max(1, Math.ceil((len / c) * 2)); // half-cell stride
+    let pcx = NaN, pcy = NaN;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const cx = Math.floor((ax + (bx - ax) * t) / c);
+      const cy = Math.floor((ay + (by - ay) * t) / c);
+      if (cx !== pcx || cy !== pcy) {
+        this.add(cx, cy, s);
+        pcx = cx;
+        pcy = cy;
+      }
+    }
+  }
+
+  /** All segments registered in the 3x3 block of cells around (px, py). */
+  near(px: number, py: number, out: Set<Segment2D>): void {
+    const c = this.cell;
+    const cx = Math.floor(px / c);
+    const cy = Math.floor(py / c);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dy = -1; dy <= 1; dy++) {
+        const arr = this.buckets.get(SegmentGrid.key(cx + dx, cy + dy));
+        if (arr) for (const s of arr) out.add(s);
+      }
+    }
+  }
+}
+
+/**
+ * Snap a GPS polyline onto the OSM road network with an HMM map-matcher
+ * (Newson & Krumm, 2009 — the model OSRM/Valhalla-style matchers use),
+ * solved globally with the Viterbi algorithm.
+ *
+ * Why this beats a greedy nearest-segment + hysteresis approach: at a fork
+ * the side branch is briefly the *nearest* road, so a per-point matcher
+ * flickers onto it and back, shattering the line. Viterbi instead picks the
+ * single most-likely road *sequence* over the whole track, weighing two costs:
+ *
+ *   - Emission cost  d² / (2σ²): how far the point sits from a candidate way.
+ *   - Transition cost: a fixed SWITCH_PENALTY for changing ways while both
+ *     are still in range, plus |gpsStep − routeStep| / β for movement that
+ *     is geometrically inconsistent (e.g. the lateral jump between two
+ *     parallel roads). A brief detour onto a fork must pay the switch penalty
+ *     twice (in and out), which a couple of points of lower emission can never
+ *     recoup — so the path stays on the road actually being driven. A *real*
+ *     turn is unaffected: the old way leaves snap range, dropping out as a
+ *     candidate, so the switch happens for free.
+ *
+ * Points with no way within maxDistM keep their original position (an
+ * off-road state that resets the chain so re-acquisition afterwards is free).
+ */
 export function snapPointsToSegments(
   points: Pt2D[],
   segments: Segment2D[],
@@ -126,158 +203,114 @@ export function snapPointsToSegments(
     return points.map(p => ({ x: p.x, y: p.y }));
   }
   const maxD2 = maxDistM * maxDistM;
-  // Switching ways requires the new candidate to win on BOTH a ratio
-  // (<=40% of own d2) AND an absolute margin (>=0.5 m2 better) for K
-  // consecutive samples. K provides temporal hysteresis: 1-2 sample
-  // blips at junctions never commit a switch.
-  const STICKY_RATIO = 0.4;
-  const STICKY_MARGIN2 = 0.5;
-  const SWITCH_HOLD = 4;
-  const SHORT_ISLAND_MAX_POINTS = 200;
-  const SHORT_ISLAND_MAX_DIST_M = 10;
 
-  // Group segments by wayId so we can quickly do "best on this way".
-  const byWay = new Map<number, Segment2D[]>();
-  for (const s of segments) {
-    let arr = byWay.get(s.wayId);
-    if (!arr) byWay.set(s.wayId, (arr = []));
-    arr.push(s);
-  }
+  // --- model parameters -----------------------------------------------------
+  // σ: GPS scatter assumed around the true road, in metres. Scaled off the
+  //    snap radius so a wider radius tolerates noisier fixes.
+  const sigma = Math.max(maxDistM / 2.5, 2);
+  const TWO_SIGMA2 = 2 * sigma * sigma;
+  // β: tolerance (metres) for inconsistency between the GPS step and the
+  //    matched on-road step. Smaller => geometry mismatches are penalised
+  //    harder, which discourages lateral hops between parallel roads.
+  const BETA = 1;
+  // Fixed cost of changing ways while the previous way is still reachable.
+  // Large enough that no realistic emission saving inside an overlap zone is
+  // worth a transient switch; forced switches (old way out of range) are free.
+  const SWITCH_PENALTY = 30;
+  // Per-point candidate cap keeps the Viterbi inner loop O(P·C²) bounded even
+  // in dense road meshes; the nearest few ways are all that matter.
+  const MAX_CANDIDATES = 6;
 
-  const bestOnWay = (wayId: number, p: Pt2D): Projection | null => {
-    const waySegs = byWay.get(wayId);
-    if (!waySegs) return null;
-    let best: Projection | null = null;
-    for (const s of waySegs) {
+  const grid = new SegmentGrid(segments, maxDistM);
+  const scratch = new Set<Segment2D>();
+
+  // Build per-point candidate ways: the nearest projection on each way within
+  // maxDistM (deduped to one entry per wayId). Empty => off-road point.
+  const candidatesAt = (p: Pt2D): Candidate[] => {
+    scratch.clear();
+    grid.near(p.x, p.y, scratch);
+    const bestByWay = new Map<number, Candidate>();
+    for (const s of scratch) {
       const pr = projectOnto(s, p.x, p.y);
-      if (!best || pr.d2 < best.d2) best = pr;
+      if (pr.d2 > maxD2) continue;
+      const prev = bestByWay.get(s.wayId);
+      if (!prev || pr.d2 < prev.d2) {
+        bestByWay.set(s.wayId, { wayId: s.wayId, x: pr.sx, y: pr.sy, d2: pr.d2 });
+      }
     }
-    return best;
+    let cands = [...bestByWay.values()];
+    if (cands.length > MAX_CANDIDATES) {
+      cands.sort((a, b) => a.d2 - b.d2);
+      cands = cands.slice(0, MAX_CANDIDATES);
+    }
+    return cands;
   };
 
-  type Snap = {
-    x: number;
-    y: number;
-    wayId: number; // -1 == unsnapped
-    d2: number;
+  const OFF_ROAD = (p: Pt2D): Candidate => ({ wayId: -1, x: p.x, y: p.y, d2: 0 });
+
+  const states: Candidate[][] = points.map(p => {
+    const cands = candidatesAt(p);
+    return cands.length ? cands : [OFF_ROAD(p)];
+  });
+
+  // --- Viterbi forward pass -------------------------------------------------
+  const emission = (c: Candidate): number =>
+    c.wayId < 0 ? 0 : c.d2 / TWO_SIGMA2;
+
+  const transition = (
+    from: Candidate,
+    to: Candidate,
+    gpsStep: number,
+  ): number => {
+    // Off-road on either end breaks the on-road chain: no penalty, so the
+    // path can drop off and re-acquire any road freely across a gap.
+    if (from.wayId < 0 || to.wayId < 0) return 0;
+    const routeStep = Math.hypot(to.x - from.x, to.y - from.y);
+    let cost = Math.abs(gpsStep - routeStep) / BETA;
+    if (from.wayId !== to.wayId) cost += SWITCH_PENALTY;
+    return cost;
   };
 
-  const first: Snap[] = points.map(p => {
-    let bestD2 = Infinity;
-    let bestSx = p.x;
-    let bestSy = p.y;
-    let bestWay = -1;
-    for (const s of segments) {
-      const pr = projectOnto(s, p.x, p.y);
-      if (pr.d2 < bestD2) {
-        bestD2 = pr.d2;
-        bestSx = pr.sx;
-        bestSy = pr.sy;
-        bestWay = s.wayId;
-      }
-    }
-    if (bestD2 > maxD2) return { x: p.x, y: p.y, wayId: -1, d2: bestD2 };
-    return { x: bestSx, y: bestSy, wayId: bestWay, d2: bestD2 };
-  });
+  const n = points.length;
+  // cost[j] = best total cost of a path ending in state j of the current point
+  let prevCost = states[0].map(emission);
+  const back: number[][] = new Array(n);
+  back[0] = states[0].map(() => -1);
 
-  // Sticky-way pass with temporal hysteresis.
-  let curWay = -1;
-  let pendingWay = -1;
-  let pendingCount = 0;
-  const sticky: Snap[] = points.map((p, i) => {
-    const ownBest = curWay >= 0 ? bestOnWay(curWay, p) : null;
-    const fb = first[i];
-    if (fb.wayId < 0) {
-      // Out of reach for any way.
-      curWay = -1;
-      pendingWay = -1;
-      pendingCount = 0;
-      return fb;
-    }
-    if (curWay < 0) {
-      curWay = fb.wayId;
-      pendingWay = -1;
-      pendingCount = 0;
-      return fb;
-    }
-    if (fb.wayId === curWay) {
-      pendingWay = -1;
-      pendingCount = 0;
-      return fb;
-    }
-    // We've drifted off our current way; best global is on a different
-    // way. Decide whether to switch.
-    const ownReachable = ownBest !== null && ownBest.d2 <= maxD2;
-    const winsRatio = ownBest ? fb.d2 < STICKY_RATIO * ownBest.d2 : true;
-    const winsMargin = ownBest ? ownBest.d2 - fb.d2 >= STICKY_MARGIN2 : true;
-    const candidateBeatsOwn = !ownReachable || (winsRatio && winsMargin);
-
-    if (!ownReachable) {
-      // We've fallen off the current way entirely. Switch immediately.
-      curWay = fb.wayId;
-      pendingWay = -1;
-      pendingCount = 0;
-      return fb;
-    }
-    if (candidateBeatsOwn) {
-      if (pendingWay === fb.wayId) pendingCount++;
-      else { pendingWay = fb.wayId; pendingCount = 1; }
-      if (pendingCount >= SWITCH_HOLD) {
-        curWay = fb.wayId;
-        pendingWay = -1;
-        pendingCount = 0;
-        return fb;
-      }
-    } else {
-      pendingWay = -1;
-      pendingCount = 0;
-    }
-    // Hold on the current way until hysteresis is satisfied.
-    return { x: ownBest!.sx, y: ownBest!.sy, wayId: curWay, d2: ownBest!.d2 };
-  });
-
-  // Smoothing pass: a short island on way B surrounded by way A is flipped
-  // back to A when A remains reachable throughout the island. This catches
-  // fork-side GPS drift that lasts longer than SWITCH_HOLD but only covers
-  // a few metres.
-  const ways = sticky.map(s => s.wayId);
-  for (let start = 0; start < sticky.length;) {
-    let end = start + 1;
-    while (end < sticky.length && ways[end] === ways[start]) end++;
-
-    const islandWay = ways[start];
-    const surroundingWay =
-      start > 0 && end < sticky.length && ways[start - 1] === ways[end]
-        ? ways[start - 1]
-        : -1;
-
-    if (islandWay >= 0 && surroundingWay >= 0 && islandWay !== surroundingWay) {
-      const pointCount = end - start;
-      let islandDist = 0;
-      for (let i = start + 1; i < end; i++) {
-        islandDist += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
-      }
-      if (pointCount <= SHORT_ISLAND_MAX_POINTS && islandDist <= SHORT_ISLAND_MAX_DIST_M) {
-        const replacements: Snap[] = [];
-        for (let i = start; i < end; i++) {
-          const best = bestOnWay(surroundingWay, points[i]);
-          if (!best || best.d2 > maxD2) {
-            replacements.length = 0;
-            break;
-          }
-          replacements.push({ x: best.sx, y: best.sy, wayId: surroundingWay, d2: best.d2 });
-        }
-        if (replacements.length === pointCount) {
-          for (let i = start; i < end; i++) {
-            sticky[i] = replacements[i - start];
-            ways[i] = surroundingWay;
-          }
+  for (let i = 1; i < n; i++) {
+    const cur = states[i];
+    const prev = states[i - 1];
+    const gpsStep = Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+    const curCost = new Array(cur.length).fill(Infinity);
+    const curBack = new Array(cur.length).fill(0);
+    for (let k = 0; k < cur.length; k++) {
+      const emit = emission(cur[k]);
+      let best = Infinity;
+      let bestJ = 0;
+      for (let j = 0; j < prev.length; j++) {
+        const c = prevCost[j] + transition(prev[j], cur[k], gpsStep);
+        if (c < best) {
+          best = c;
+          bestJ = j;
         }
       }
+      curCost[k] = best + emit;
+      curBack[k] = bestJ;
     }
-
-    start = end;
+    prevCost = curCost;
+    back[i] = curBack;
   }
 
-  return sticky.map(s => ({ x: s.x, y: s.y }));
+  // --- backtrack ------------------------------------------------------------
+  let k = 0;
+  for (let j = 1; j < prevCost.length; j++) {
+    if (prevCost[j] < prevCost[k]) k = j;
+  }
+  const out: Pt2D[] = new Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    const c = states[i][k];
+    out[i] = { x: c.x, y: c.y };
+    k = back[i][k];
+  }
+  return out;
 }
