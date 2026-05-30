@@ -7,3 +7,4 @@ tsconfig.tsbuildinfo
 local
 output
 .vscode
+.claude
