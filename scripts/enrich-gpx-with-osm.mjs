@@ -224,13 +224,21 @@ export function parseGpxTrack(gpxText, coordinateSystem = 'wgs84') {
 }
 
 function bboxForPoints(points, marginDeg) {
-  const lats = points.map(p => p.lat);
-  const lons = points.map(p => p.lon);
+  let minLat = Infinity;
+  let minLon = Infinity;
+  let maxLat = -Infinity;
+  let maxLon = -Infinity;
+  for (const point of points) {
+    if (point.lat < minLat) minLat = point.lat;
+    if (point.lat > maxLat) maxLat = point.lat;
+    if (point.lon < minLon) minLon = point.lon;
+    if (point.lon > maxLon) maxLon = point.lon;
+  }
   return [
-    Math.min(...lons) - marginDeg,
-    Math.min(...lats) - marginDeg,
-    Math.max(...lons) + marginDeg,
-    Math.max(...lats) + marginDeg,
+    minLon - marginDeg,
+    minLat - marginDeg,
+    maxLon + marginDeg,
+    maxLat + marginDeg,
   ];
 }
 
@@ -646,7 +654,7 @@ export async function run(argv = process.argv.slice(2)) {
   console.log(`summary=${result.paths.summary}`);
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   run().catch(error => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);

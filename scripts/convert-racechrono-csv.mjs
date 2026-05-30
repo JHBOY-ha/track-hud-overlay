@@ -16,6 +16,8 @@
 //        [--position-current=1] [--position-total=2]
 //        [--rate=N]                       # force fixed Hz output
 //        [--speed-source=gps|obd|calc]    # default: gps
+//        [--gpx-min-distance=1]            # meters between GPX points; 0 keeps all
+//        [--gpx-max-interval=1]            # seconds between GPX points while stationary
 //
 // Output columns (compatible with scripts/convert-obd-log.mjs):
 //   t, speed_kmh, rpm, rpm_max, gear, throttle, brake, abs, tcs,
@@ -42,6 +44,8 @@ const opts = {
   brakeSmoothTau: 0.2,
   throttleIdle: 'auto', // 'auto' = use observed min, or a numeric % baseline
   gpx: 'auto', // 'auto' writes <input>.gpx alongside; pass a path or 'off' to disable
+  gpxMinDistanceM: 1,
+  gpxMaxIntervalS: 1,
 };
 for (const a of args) {
   if (a.startsWith('--vehicle=')) opts.vehicle = a.slice(10);
@@ -64,6 +68,8 @@ for (const a of args) {
   }
   else if (a.startsWith('--gpx=')) opts.gpx = a.slice(6);
   else if (a === '--no-gpx') opts.gpx = 'off';
+  else if (a.startsWith('--gpx-min-distance=')) opts.gpxMinDistanceM = Number(a.slice(19));
+  else if (a.startsWith('--gpx-max-interval=')) opts.gpxMaxIntervalS = Number(a.slice(19));
   else positional.push(a);
 }
 const [inPath, outPathArg] = positional;
@@ -348,12 +354,40 @@ if (opts.gpx !== 'off') {
     ? inPath.replace(/\.csv$/i, '') + '.gpx'
     : opts.gpx;
   const esc = (s) => String(s).replace(/[<>&"']/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' }[c]));
+  const haversineM = (a, b) => {
+    const r = 6371008.8;
+    const toRad = (deg) => deg * Math.PI / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLon = toRad(b.lon - a.lon);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const h = Math.sin(dLat / 2) ** 2
+      + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * r * Math.asin(Math.min(1, Math.sqrt(h)));
+  };
+  const shouldKeepGpxPoint = (point, lastKept) => {
+    if (!lastKept) return true;
+    const minDistance = Number.isFinite(opts.gpxMinDistanceM)
+      ? Math.max(0, opts.gpxMinDistanceM)
+      : 0;
+    const maxInterval = Number.isFinite(opts.gpxMaxIntervalS)
+      ? Math.max(0, opts.gpxMaxIntervalS)
+      : 0;
+    if (minDistance > 0 && haversineM(lastKept, point) >= minDistance) return true;
+    if (maxInterval > 0 && point.ts !== undefined && lastKept.ts !== undefined) {
+      return point.ts - lastKept.ts >= maxInterval;
+    }
+    return minDistance === 0 && maxInterval === 0;
+  };
   const trkpts = [];
-  let lastLat, lastLon;
+  let lastLat, lastLon, lastKept;
   for (const e of events) {
     if (e.lat === undefined || e.lon === undefined) continue;
     if (e.lat === lastLat && e.lon === lastLon) continue;
     lastLat = e.lat; lastLon = e.lon;
+    const point = { lat: e.lat, lon: e.lon, ts: e.ts };
+    if (!shouldKeepGpxPoint(point, lastKept)) continue;
+    lastKept = point;
     const parts = [`<trkpt lat="${e.lat}" lon="${e.lon}">`];
     if (e.altitude !== undefined) parts.push(`<ele>${e.altitude}</ele>`);
     if (e.ts !== undefined) parts.push(`<time>${new Date(e.ts * 1000).toISOString()}</time>`);
