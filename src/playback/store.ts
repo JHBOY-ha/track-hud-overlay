@@ -40,6 +40,8 @@ export interface HudSettings {
   minimapStrokeWidth: number;
   hudShakeEnabled: boolean;
   hudShakeIntensity: number;
+  hudCurvatureEnabled: boolean;
+  hudCurvatureIntensity: number;
 }
 
 export const DEFAULT_SETTINGS: HudSettings = {
@@ -51,6 +53,8 @@ export const DEFAULT_SETTINGS: HudSettings = {
   minimapStrokeWidth: 10,
   hudShakeEnabled: true,
   hudShakeIntensity: 1,
+  hudCurvatureEnabled: true,
+  hudCurvatureIntensity: 1,
 };
 
 function normalizeSettings(parsed: unknown): HudSettings {
@@ -76,6 +80,12 @@ function normalizeSettings(parsed: unknown): HudSettings {
     if (typeof rec.hudShakeEnabled === 'boolean') out.hudShakeEnabled = rec.hudShakeEnabled;
     if (typeof rec.hudShakeIntensity === 'number' && rec.hudShakeIntensity >= 0) {
       out.hudShakeIntensity = Math.min(3, rec.hudShakeIntensity);
+    }
+    if (typeof rec.hudCurvatureEnabled === 'boolean') {
+      out.hudCurvatureEnabled = rec.hudCurvatureEnabled;
+    }
+    if (typeof rec.hudCurvatureIntensity === 'number' && rec.hudCurvatureIntensity >= 0) {
+      out.hudCurvatureIntensity = Math.min(3, rec.hudCurvatureIntensity);
     }
   }
   return out;

@@ -159,6 +159,8 @@ export function App() {
     const minimapStrokeWidthParam = q.get('minimapStrokeWidth');
     const hudShakeParam = q.get('hudShake');
     const hudShakeIntensityParam = q.get('hudShakeIntensity');
+    const hudCurvatureParam = q.get('hudCurvature');
+    const hudCurvatureIntensityParam = q.get('hudCurvatureIntensity');
 
     if (player) usePlayback.getState().setProfile({ name: player });
     if (u === 'mph' || u === 'kmh') usePlayback.getState().setUnit(u);
@@ -190,6 +192,13 @@ export function App() {
     if (hudShakeIntensityParam !== null) {
       const v = Number(hudShakeIntensityParam);
       if (Number.isFinite(v) && v >= 0) usePlayback.getState().setSetting('hudShakeIntensity', v);
+    }
+    if (hudCurvatureParam === '0' || hudCurvatureParam === '1') {
+      usePlayback.getState().setSetting('hudCurvatureEnabled', hudCurvatureParam === '1');
+    }
+    if (hudCurvatureIntensityParam !== null) {
+      const v = Number(hudCurvatureIntensityParam);
+      if (Number.isFinite(v) && v >= 0) usePlayback.getState().setSetting('hudCurvatureIntensity', v);
     }
     if (exporter) {
       usePlayback.getState().setExporterMode(true);
@@ -935,6 +944,8 @@ function ExportSettingsPanel({
   const minimapStrokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
   const hudShakeEnabled = usePlayback(s => s.settings.hudShakeEnabled);
   const hudShakeIntensity = usePlayback(s => s.settings.hudShakeIntensity);
+  const hudCurvatureEnabled = usePlayback(s => s.settings.hudCurvatureEnabled);
+  const hudCurvatureIntensity = usePlayback(s => s.settings.hudCurvatureIntensity);
 
   useEffect(() => {
     setTelemetryUrl(defaultTelemetryUrl);
@@ -978,6 +989,8 @@ function ExportSettingsPanel({
       '--minimap-stroke', String(minimapStrokeWidth),
       '--hud-shake', hudShakeEnabled ? '1' : '0',
       '--hud-shake-intensity', String(hudShakeIntensity),
+      '--hud-curvature', hudCurvatureEnabled ? '1' : '0',
+      '--hud-curvature-intensity', String(hudCurvatureIntensity),
       ...(progressStart !== null && progressEnd !== null && progressEnd > progressStart
         ? ['--progress-start', String(progressStart), '--progress-end', String(progressEnd)]
         : []),
@@ -1009,6 +1022,8 @@ function ExportSettingsPanel({
     minimapStrokeWidth,
     hudShakeEnabled,
     hudShakeIntensity,
+    hudCurvatureEnabled,
+    hudCurvatureIntensity,
     progressStart,
     progressEnd,
     outPath,
@@ -1402,6 +1417,28 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         需要带时间戳的 GPX；编辑布局时会暂停抖动。
       </div>
 
+      <div style={sectionTitle}>HUD 曲面</div>
+      <label
+        style={{
+          ...labelStyle,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          color: '#ddd',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={settings.hudCurvatureEnabled}
+          onChange={e => setSetting('hudCurvatureEnabled', e.target.checked)}
+        />
+        头盔球面排列
+      </label>
+      {numberField('hudCurvatureIntensity', '曲面强度', 'x', { min: 0, max: 3, step: 0.1 })}
+      <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
+        中央区域后退，两侧向前并朝视线方向旋转。
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
         <button
           onClick={() => {
@@ -1425,7 +1462,8 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         默认值：坐标系 {COORDINATE_SYSTEM_LABELS[DEFAULT_SETTINGS.trackCoordinateSystem]} · 阈值{' '}
         {DEFAULT_SETTINGS.snapMaxDistM} m · 半径{' '}
         {DEFAULT_SETTINGS.minimapViewRadiusM} m · 俯视 {DEFAULT_SETTINGS.minimapTiltDeg}° · 线宽{' '}
-        {DEFAULT_SETTINGS.minimapStrokeWidth} · 抖动 {DEFAULT_SETTINGS.hudShakeIntensity}x
+        {DEFAULT_SETTINGS.minimapStrokeWidth} · 抖动 {DEFAULT_SETTINGS.hudShakeIntensity}x · 曲面{' '}
+        {DEFAULT_SETTINGS.hudCurvatureIntensity}x
       </div>
     </div>
   );

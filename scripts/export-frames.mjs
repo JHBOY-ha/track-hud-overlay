@@ -188,6 +188,8 @@ export async function main() {
   const MINIMAP_STROKE = arg('minimap-stroke', null);
   const HUD_SHAKE = arg('hud-shake', null);
   const HUD_SHAKE_INTENSITY = arg('hud-shake-intensity', null);
+  const HUD_CURVATURE = arg('hud-curvature', null);
+  const HUD_CURVATURE_INTENSITY = arg('hud-curvature-intensity', null);
   const OUT = arg('out', 'out/hud.webm');
 
   const localFiles = [RAW_TELEMETRY, RAW_TRACK].filter(isLocalFileArg);
@@ -272,6 +274,11 @@ export async function main() {
       url.searchParams.set('hudShake', v === '1' || v === 'true' ? '1' : '0');
     }
     setNumParam('hudShakeIntensity', HUD_SHAKE_INTENSITY);
+    if (HUD_CURVATURE !== null) {
+      const v = String(HUD_CURVATURE).trim().toLowerCase();
+      url.searchParams.set('hudCurvature', v === '1' || v === 'true' ? '1' : '0');
+    }
+    setNumParam('hudCurvatureIntensity', HUD_CURVATURE_INTENSITY);
 
     console.log(`[export] opening ${url}`);
     const browser = await puppeteer.launch({

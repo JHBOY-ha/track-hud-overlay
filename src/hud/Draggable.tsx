@@ -1,6 +1,12 @@
 import { useRef } from 'react';
 import type { ReactNode, CSSProperties } from 'react';
 import { usePlayback, type WidgetId } from '../playback/store';
+import {
+  helmetCurveAt,
+  helmetCurveTransform,
+  HUD_STAGE_H,
+  HUD_STAGE_W,
+} from './helmetCurve';
 
 export type Anchor = 'tl' | 'tr' | 'bl' | 'br';
 
@@ -24,6 +30,13 @@ const ORIGIN: Record<Anchor, string> = {
 };
 
 const HANDLE_SIZE = 14;
+const WIDGET_SIZE_HINTS: Record<WidgetId, { width: number; height: number }> = {
+  'topLeft.progress': { width: 330, height: 135 },
+  'topRight.position': { width: 240, height: 130 },
+  'minimap.disc': { width: 240, height: 268 },
+  'minimap.name': { width: 240, height: 22 },
+  'speedo.gauge': { width: 340, height: 340 },
+};
 
 function handleStyle(anchor: Anchor, invScale: number): CSSProperties {
   const opp: Anchor = ((anchor[0] === 't' ? 'b' : 't') +
@@ -53,11 +66,47 @@ function handleStyle(anchor: Anchor, invScale: number): CSSProperties {
 // layout remains untouched.
 const POSITION_KEYS = ['position', 'left', 'right', 'top', 'bottom', 'filter'] as const;
 
+function cssNumber(v: CSSProperties[keyof CSSProperties]): number | null {
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v.replace(/px$/, ''));
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function widgetCenter(
+  id: WidgetId,
+  style: CSSProperties | undefined,
+  offset: { x: number; y: number },
+): { x: number; y: number } {
+  const hint = WIDGET_SIZE_HINTS[id];
+  const width = cssNumber(style?.width) ?? hint.width;
+  const height = cssNumber(style?.height) ?? hint.height;
+  const left = cssNumber(style?.left);
+  const right = cssNumber(style?.right);
+  const top = cssNumber(style?.top);
+  const bottom = cssNumber(style?.bottom);
+  const x = left !== null
+    ? left + width / 2
+    : right !== null
+      ? HUD_STAGE_W - right - width / 2
+      : HUD_STAGE_W / 2;
+  const y = top !== null
+    ? top + height / 2
+    : bottom !== null
+      ? HUD_STAGE_H - bottom - height / 2
+      : HUD_STAGE_H / 2;
+  return { x: x + offset.x, y: y + offset.y };
+}
+
 export function Draggable({ id, anchor = 'tl', children, style, manualScale = false }: Props) {
   const widget = usePlayback(s => s.layout[id]);
   const editMode = usePlayback(s => s.editMode);
   const exporterMode = usePlayback(s => s.exporterMode);
   const stageScale = usePlayback(s => s.stageScale);
+  const hudCurvatureEnabled = usePlayback(s => s.settings.hudCurvatureEnabled);
+  const hudCurvatureIntensity = usePlayback(s => s.settings.hudCurvatureIntensity);
 
   const dragRef = useRef<{
     pointerId: number;
@@ -166,6 +215,15 @@ export function Draggable({ id, anchor = 'tl', children, style, manualScale = fa
 
   const effectiveScale = manualScale ? 1 : widget.scale;
   const invScale = effectiveScale > 0 ? 1 / effectiveScale : 1;
+  const center = widgetCenter(id, style, widget);
+  const curve = hudCurvatureEnabled
+    ? helmetCurveTransform(helmetCurveAt(center.x, center.y, hudCurvatureIntensity))
+    : '';
+  const transform = [
+    `translate(${widget.x}px, ${widget.y}px)`,
+    curve,
+    `scale(${effectiveScale})`,
+  ].filter(Boolean).join(' ');
 
   return (
     <div
@@ -178,8 +236,9 @@ export function Draggable({ id, anchor = 'tl', children, style, manualScale = fa
       <div
         style={{
           ...innerStyle,
-          transform: `translate(${widget.x}px, ${widget.y}px) scale(${effectiveScale})`,
+          transform,
           transformOrigin: ORIGIN[anchor],
+          transformStyle: 'preserve-3d',
           outline: active ? '1px dashed rgba(108, 204, 255, 0.7)' : 'none',
           outlineOffset: active ? 4 : 0,
           cursor: active ? 'move' : 'default',

@@ -48,6 +48,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(source, /const minimapStrokeWidth = usePlayback\(s => s\.settings\.minimapStrokeWidth\);/);
   assert.match(source, /const hudShakeEnabled = usePlayback\(s => s\.settings\.hudShakeEnabled\);/);
   assert.match(source, /const hudShakeIntensity = usePlayback\(s => s\.settings\.hudShakeIntensity\);/);
+  assert.match(source, /const hudCurvatureEnabled = usePlayback\(s => s\.settings\.hudCurvatureEnabled\);/);
+  assert.match(source, /const hudCurvatureIntensity = usePlayback\(s => s\.settings\.hudCurvatureIntensity\);/);
   assert.match(source, /'--snap-to-roads', snapToRoads \? '1' : '0'/);
   assert.match(source, /'--snap-max-dist', String\(snapMaxDistM\)/);
   assert.match(source, /'--minimap-radius', String\(minimapViewRadiusM\)/);
@@ -55,6 +57,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(source, /'--minimap-stroke', String\(minimapStrokeWidth\)/);
   assert.match(source, /'--hud-shake', hudShakeEnabled \? '1' : '0'/);
   assert.match(source, /'--hud-shake-intensity', String\(hudShakeIntensity\)/);
+  assert.match(source, /'--hud-curvature', hudCurvatureEnabled \? '1' : '0'/);
+  assert.match(source, /'--hud-curvature-intensity', String\(hudCurvatureIntensity\)/);
   assert.match(source, /q\.get\('snapToRoads'\)/);
   assert.match(source, /q\.get\('snapMaxDistM'\)/);
   assert.match(source, /q\.get\('minimapViewRadiusM'\)/);
@@ -62,6 +66,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(source, /q\.get\('minimapStrokeWidth'\)/);
   assert.match(source, /q\.get\('hudShake'\)/);
   assert.match(source, /q\.get\('hudShakeIntensity'\)/);
+  assert.match(source, /q\.get\('hudCurvature'\)/);
+  assert.match(source, /q\.get\('hudCurvatureIntensity'\)/);
   assert.match(source, /setSetting\('snapToRoads',/);
   assert.match(source, /setSetting\('snapMaxDistM',/);
   assert.match(source, /setSetting\('minimapViewRadiusM',/);
@@ -69,6 +75,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(source, /setSetting\('minimapStrokeWidth',/);
   assert.match(source, /setSetting\('hudShakeEnabled',/);
   assert.match(source, /setSetting\('hudShakeIntensity',/);
+  assert.match(source, /setSetting\('hudCurvatureEnabled',/);
+  assert.match(source, /setSetting\('hudCurvatureIntensity',/);
   assert.match(exportFramesSource, /SNAP_TO_ROADS = arg\('snap-to-roads', null\)/);
   assert.match(exportFramesSource, /SNAP_MAX_DIST = arg\('snap-max-dist', null\)/);
   assert.match(exportFramesSource, /MINIMAP_RADIUS = arg\('minimap-radius', null\)/);
@@ -76,6 +84,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(exportFramesSource, /MINIMAP_STROKE = arg\('minimap-stroke', null\)/);
   assert.match(exportFramesSource, /HUD_SHAKE = arg\('hud-shake', null\)/);
   assert.match(exportFramesSource, /HUD_SHAKE_INTENSITY = arg\('hud-shake-intensity', null\)/);
+  assert.match(exportFramesSource, /HUD_CURVATURE = arg\('hud-curvature', null\)/);
+  assert.match(exportFramesSource, /HUD_CURVATURE_INTENSITY = arg\('hud-curvature-intensity', null\)/);
   assert.match(exportFramesSource, /url\.searchParams\.set\('snapToRoads',/);
   assert.match(exportFramesSource, /setNumParam\('snapMaxDistM', SNAP_MAX_DIST\)/);
   assert.match(exportFramesSource, /setNumParam\('minimapViewRadiusM', MINIMAP_RADIUS\)/);
@@ -83,6 +93,8 @@ test('export command carries advanced HUD settings', () => {
   assert.match(exportFramesSource, /setNumParam\('minimapStrokeWidth', MINIMAP_STROKE\)/);
   assert.match(exportFramesSource, /url\.searchParams\.set\('hudShake',/);
   assert.match(exportFramesSource, /setNumParam\('hudShakeIntensity', HUD_SHAKE_INTENSITY\)/);
+  assert.match(exportFramesSource, /url\.searchParams\.set\('hudCurvature',/);
+  assert.match(exportFramesSource, /setNumParam\('hudCurvatureIntensity', HUD_CURVATURE_INTENSITY\)/);
 });
 
 test('enriched output track files use /output export URLs', () => {

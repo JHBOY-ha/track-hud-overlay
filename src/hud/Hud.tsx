@@ -6,6 +6,12 @@ import { Minimap } from './Minimap';
 import { TopLeftStatus } from './TopLeftStatus';
 import { TopRightPosition } from './TopRightPosition';
 import { hudShakeAt } from './hudShake';
+import {
+  helmetCurveAt,
+  helmetCurveTransform,
+  HUD_STAGE_H,
+  HUD_STAGE_W,
+} from './helmetCurve';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -48,6 +54,8 @@ export function Hud() {
   const rangeStart = usePlayback(s => effectiveRange(s)[0]);
   const hudShakeEnabled = usePlayback(s => s.settings.hudShakeEnabled);
   const hudShakeIntensity = usePlayback(s => s.settings.hudShakeIntensity);
+  const hudCurvatureEnabled = usePlayback(s => s.settings.hudCurvatureEnabled);
+  const hudCurvatureIntensity = usePlayback(s => s.settings.hudCurvatureIntensity);
   const editMode = usePlayback(s => s.editMode);
 
   // Telemetry/track samples are keyed by their intrinsic absolute time;
@@ -85,6 +93,22 @@ export function Hud() {
   );
 
   const rpmMax = telemetry?.rpmMax ?? 8000;
+  const curvedBracket = (pos: 'tl' | 'tr' | 'bl' | 'br'): React.CSSProperties => {
+    const x = pos[1] === 'l'
+      ? BRACKET_INSET + BRACKET_SIZE / 2
+      : HUD_STAGE_W - BRACKET_INSET - BRACKET_SIZE / 2;
+    const y = pos[0] === 't'
+      ? BRACKET_INSET + BRACKET_SIZE / 2
+      : HUD_STAGE_H - BRACKET_INSET - BRACKET_SIZE / 2;
+    const curve = hudCurvatureEnabled
+      ? helmetCurveTransform(helmetCurveAt(x, y, hudCurvatureIntensity))
+      : '';
+    return {
+      ...bracket(pos),
+      transform: curve || undefined,
+      transformOrigin: 'center center',
+    };
+  };
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const scale = usePlayback(s => s.stageScale);
@@ -132,13 +156,16 @@ export function Hud() {
             inset: 0,
             transform: `translate(${shake.x.toFixed(2)}px, ${shake.y.toFixed(2)}px) rotate(${shake.rotateDeg.toFixed(3)}deg)`,
             transformOrigin: 'center center',
+            perspective: hudCurvatureEnabled ? 1280 : undefined,
+            perspectiveOrigin: '50% 50%',
+            transformStyle: 'preserve-3d',
             willChange: hudShakeEnabled ? 'transform' : 'auto',
           }}
         >
-          <div style={bracket('tl')} />
-          <div style={bracket('tr')} />
-          <div style={bracket('bl')} />
-          <div style={bracket('br')} />
+          <div style={curvedBracket('tl')} />
+          <div style={curvedBracket('tr')} />
+          <div style={curvedBracket('bl')} />
+          <div style={curvedBracket('br')} />
 
           <TopLeftStatus sample={sample} currentTime={elapsed} />
           <TopRightPosition sample={sample} />
