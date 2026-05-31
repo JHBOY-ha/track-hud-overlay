@@ -4,7 +4,7 @@ import { effectiveRange, startPlaybackLoop, usePlayback } from './playback/store
 import { Timeline } from './ui/Timeline';
 import { parseTelemetryCsv, parseTelemetryJson } from './data/telemetry';
 import { parseGpx, parseGeoJson } from './data/track';
-import { DEFAULT_SETTINGS, type HudSettings } from './playback/store';
+import { DEFAULT_SETTINGS, HUD_SHAKE_INTENSITY_MAX, type HudSettings } from './playback/store';
 import type { SpeedUnit } from './util/units';
 import { exportUrlForDroppedFileName } from './util/exportUrls';
 import {
@@ -1412,7 +1412,11 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         />
         根据 GPX 位置和高度模拟相机惯性
       </label>
-      {numberField('hudShakeIntensity', '抖动强度', 'x', { min: 0, max: 3, step: 0.1 })}
+      {numberField('hudShakeIntensity', '抖动强度', 'x', {
+        min: 0,
+        max: HUD_SHAKE_INTENSITY_MAX,
+        step: 0.1,
+      })}
       <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
         需要带时间戳的 GPX；编辑布局时会暂停抖动。
       </div>

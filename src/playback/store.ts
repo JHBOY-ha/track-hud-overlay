@@ -30,6 +30,7 @@ const DEFAULT_LAYOUT: Layout = {
 const LAYOUT_KEY = 'hud5.layout.v1';
 const PRESETS_KEY = 'hud5.presets.v1';
 const SETTINGS_KEY = 'hud5.settings.v1';
+export const HUD_SHAKE_INTENSITY_MAX = 8;
 
 export interface HudSettings {
   trackCoordinateSystem: CoordinateSystem;
@@ -79,7 +80,7 @@ function normalizeSettings(parsed: unknown): HudSettings {
     }
     if (typeof rec.hudShakeEnabled === 'boolean') out.hudShakeEnabled = rec.hudShakeEnabled;
     if (typeof rec.hudShakeIntensity === 'number' && rec.hudShakeIntensity >= 0) {
-      out.hudShakeIntensity = Math.min(3, rec.hudShakeIntensity);
+      out.hudShakeIntensity = Math.min(HUD_SHAKE_INTENSITY_MAX, rec.hudShakeIntensity);
     }
     if (typeof rec.hudCurvatureEnabled === 'boolean') {
       out.hudCurvatureEnabled = rec.hudCurvatureEnabled;

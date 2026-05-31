@@ -23,9 +23,9 @@ export function helmetCurveAt(centerX: number, centerY: number, intensity: numbe
   const vertical = Math.abs(y);
 
   return {
-    rotateXDeg: y * 4.5 * amount,
-    rotateYDeg: -x * 15 * amount,
-    z: (Math.pow(side, 1.25) * 74 + Math.pow(vertical, 1.6) * 18 - 30) * amount,
+    rotateXDeg: y * 1.8 * amount,
+    rotateYDeg: -x * 5.5 * amount,
+    z: (Math.pow(side, 1.25) * 82 + Math.pow(vertical, 1.6) * 20 - 34) * amount,
   };
 }
 

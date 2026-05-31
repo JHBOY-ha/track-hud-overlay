@@ -1,5 +1,6 @@
 import type { Track } from '../data/schema';
 import { poseAt } from '../data/track';
+import { HUD_SHAKE_INTENSITY_MAX } from '../playback/store';
 
 export interface HudShake {
   x: number;
@@ -70,7 +71,7 @@ export function hudShakeAt(
     intensity: number;
   },
 ): HudShake {
-  const intensity = clamp(opts.intensity, 0, 3);
+  const intensity = clamp(opts.intensity, 0, HUD_SHAKE_INTENSITY_MAX);
   if (!track || intensity <= 0 || track.points.length < 3 || track.points[0].t === undefined) {
     return ZERO_SHAKE;
   }
@@ -148,16 +149,16 @@ export function hudShakeAt(
   const roadHz = 3.2 + speed * 0.045;
   const roadX = fbm(opts.time + speed * 0.019, roadHz, 3) * roadEnergy * 1.15;
   const roadY = fbm(opts.time + speed * 0.027, roadHz * 1.28, 19) * roadEnergy * 1.35;
-  const roadRoll = fbm(opts.time + speed * 0.011, roadHz * 0.72, 41) * roadEnergy * 0.08;
+  const roadRoll = fbm(opts.time + speed * 0.011, roadHz * 0.72, 41) * roadEnergy * 0.025;
   const scaledIntensity = intensity * edgeFade;
 
   return {
     x: clamp((-lateralG * 6.2 + longitudinalG * 0.8 + roadX) * scaledIntensity, -16, 16),
     y: clamp((longitudinalG * 2.1 - verticalG * 3.8 + roadY) * scaledIntensity, -13, 13),
     rotateDeg: clamp(
-      (-lateralG * 0.42 + longitudinalG * 0.08 + roadRoll) * scaledIntensity,
-      -1.05,
-      1.05,
+      (-lateralG * 0.14 + longitudinalG * 0.025 + roadRoll) * scaledIntensity,
+      -0.35,
+      0.35,
     ),
   };
 }
