@@ -38,6 +38,8 @@ export interface HudSettings {
   minimapViewRadiusM: number;
   minimapTiltDeg: number;
   minimapStrokeWidth: number;
+  hudShakeEnabled: boolean;
+  hudShakeIntensity: number;
 }
 
 export const DEFAULT_SETTINGS: HudSettings = {
@@ -47,6 +49,8 @@ export const DEFAULT_SETTINGS: HudSettings = {
   minimapViewRadiusM: 50,
   minimapTiltDeg: 70,
   minimapStrokeWidth: 10,
+  hudShakeEnabled: true,
+  hudShakeIntensity: 1,
 };
 
 function normalizeSettings(parsed: unknown): HudSettings {
@@ -68,6 +72,10 @@ function normalizeSettings(parsed: unknown): HudSettings {
     }
     if (typeof rec.minimapStrokeWidth === 'number' && rec.minimapStrokeWidth > 0) {
       out.minimapStrokeWidth = rec.minimapStrokeWidth;
+    }
+    if (typeof rec.hudShakeEnabled === 'boolean') out.hudShakeEnabled = rec.hudShakeEnabled;
+    if (typeof rec.hudShakeIntensity === 'number' && rec.hudShakeIntensity >= 0) {
+      out.hudShakeIntensity = Math.min(3, rec.hudShakeIntensity);
     }
   }
   return out;

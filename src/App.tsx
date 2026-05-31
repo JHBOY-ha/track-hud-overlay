@@ -157,6 +157,8 @@ export function App() {
     const minimapViewRadiusMParam = q.get('minimapViewRadiusM');
     const minimapTiltDegParam = q.get('minimapTiltDeg');
     const minimapStrokeWidthParam = q.get('minimapStrokeWidth');
+    const hudShakeParam = q.get('hudShake');
+    const hudShakeIntensityParam = q.get('hudShakeIntensity');
 
     if (player) usePlayback.getState().setProfile({ name: player });
     if (u === 'mph' || u === 'kmh') usePlayback.getState().setUnit(u);
@@ -181,6 +183,13 @@ export function App() {
     if (minimapStrokeWidthParam !== null) {
       const v = Number(minimapStrokeWidthParam);
       if (Number.isFinite(v) && v > 0) usePlayback.getState().setSetting('minimapStrokeWidth', v);
+    }
+    if (hudShakeParam === '0' || hudShakeParam === '1') {
+      usePlayback.getState().setSetting('hudShakeEnabled', hudShakeParam === '1');
+    }
+    if (hudShakeIntensityParam !== null) {
+      const v = Number(hudShakeIntensityParam);
+      if (Number.isFinite(v) && v >= 0) usePlayback.getState().setSetting('hudShakeIntensity', v);
     }
     if (exporter) {
       usePlayback.getState().setExporterMode(true);
@@ -924,6 +933,8 @@ function ExportSettingsPanel({
   const minimapViewRadiusM = usePlayback(s => s.settings.minimapViewRadiusM);
   const minimapTiltDeg = usePlayback(s => s.settings.minimapTiltDeg);
   const minimapStrokeWidth = usePlayback(s => s.settings.minimapStrokeWidth);
+  const hudShakeEnabled = usePlayback(s => s.settings.hudShakeEnabled);
+  const hudShakeIntensity = usePlayback(s => s.settings.hudShakeIntensity);
 
   useEffect(() => {
     setTelemetryUrl(defaultTelemetryUrl);
@@ -965,6 +976,8 @@ function ExportSettingsPanel({
       '--minimap-radius', String(minimapViewRadiusM),
       '--minimap-tilt', String(minimapTiltDeg),
       '--minimap-stroke', String(minimapStrokeWidth),
+      '--hud-shake', hudShakeEnabled ? '1' : '0',
+      '--hud-shake-intensity', String(hudShakeIntensity),
       ...(progressStart !== null && progressEnd !== null && progressEnd > progressStart
         ? ['--progress-start', String(progressStart), '--progress-end', String(progressEnd)]
         : []),
@@ -994,6 +1007,8 @@ function ExportSettingsPanel({
     minimapViewRadiusM,
     minimapTiltDeg,
     minimapStrokeWidth,
+    hudShakeEnabled,
+    hudShakeIntensity,
     progressStart,
     progressEnd,
     outPath,
@@ -1365,6 +1380,28 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
       </div>
       {numberField('minimapStrokeWidth', '道路线宽', 'px', { min: 1, max: 30, step: 0.5 })}
 
+      <div style={sectionTitle}>HUD 抖动</div>
+      <label
+        style={{
+          ...labelStyle,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          color: '#ddd',
+        }}
+      >
+        <input
+          type="checkbox"
+          checked={settings.hudShakeEnabled}
+          onChange={e => setSetting('hudShakeEnabled', e.target.checked)}
+        />
+        根据 GPX 位置和高度模拟相机惯性
+      </label>
+      {numberField('hudShakeIntensity', '抖动强度', 'x', { min: 0, max: 3, step: 0.1 })}
+      <div style={{ fontSize: 11, color: '#777', lineHeight: 1.5 }}>
+        需要带时间戳的 GPX；编辑布局时会暂停抖动。
+      </div>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 4 }}>
         <button
           onClick={() => {
@@ -1388,7 +1425,7 @@ function AdvancedSettingsPanel({ onClose }: { onClose: () => void }) {
         默认值：坐标系 {COORDINATE_SYSTEM_LABELS[DEFAULT_SETTINGS.trackCoordinateSystem]} · 阈值{' '}
         {DEFAULT_SETTINGS.snapMaxDistM} m · 半径{' '}
         {DEFAULT_SETTINGS.minimapViewRadiusM} m · 俯视 {DEFAULT_SETTINGS.minimapTiltDeg}° · 线宽{' '}
-        {DEFAULT_SETTINGS.minimapStrokeWidth}
+        {DEFAULT_SETTINGS.minimapStrokeWidth} · 抖动 {DEFAULT_SETTINGS.hudShakeIntensity}x
       </div>
     </div>
   );

@@ -5,6 +5,7 @@ import { Speedometer } from './Speedometer';
 import { Minimap } from './Minimap';
 import { TopLeftStatus } from './TopLeftStatus';
 import { TopRightPosition } from './TopRightPosition';
+import { hudShakeAt } from './hudShake';
 
 const STAGE_W = 1920;
 const STAGE_H = 1080;
@@ -40,9 +41,14 @@ export function Hud() {
   const trackOffset = usePlayback(s => s.trackOffset);
   const telemetryTrimStart = usePlayback(s => s.telemetryTrimStart);
   const telemetryTrimEnd = usePlayback(s => s.telemetryTrimEnd);
+  const trackTrimStart = usePlayback(s => s.trackTrimStart);
+  const trackTrimEnd = usePlayback(s => s.trackTrimEnd);
   const unit = usePlayback(s => s.unit);
   const profile = usePlayback(s => s.profile);
   const rangeStart = usePlayback(s => effectiveRange(s)[0]);
+  const hudShakeEnabled = usePlayback(s => s.settings.hudShakeEnabled);
+  const hudShakeIntensity = usePlayback(s => s.settings.hudShakeIntensity);
+  const editMode = usePlayback(s => s.editMode);
 
   // Telemetry/track samples are keyed by their intrinsic absolute time;
   // playhead is on the shared axis, so subtract the source's offset.
@@ -55,12 +61,33 @@ export function Hud() {
   );
   const trackTime = currentTime - trackOffset;
   const elapsed = currentTime - rangeStart;
+  const shake = useMemo(
+    () =>
+      hudShakeEnabled && !editMode
+        ? hudShakeAt(track, {
+            time: trackTime,
+            progress: sample?.progress,
+            trimStart: trackTrimStart,
+            trimEnd: trackTrimEnd,
+            intensity: hudShakeIntensity,
+          })
+        : { x: 0, y: 0, rotateDeg: 0 },
+    [
+      hudShakeEnabled,
+      hudShakeIntensity,
+      editMode,
+      track,
+      trackTime,
+      trackTrimStart,
+      trackTrimEnd,
+      sample?.progress,
+    ],
+  );
 
   const rpmMax = telemetry?.rpmMax ?? 8000;
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const scale = usePlayback(s => s.stageScale);
-  const editMode = usePlayback(s => s.editMode);
   const exporterMode = usePlayback(s => s.exporterMode);
 
   useEffect(() => {
@@ -99,20 +126,30 @@ export function Hud() {
           transformOrigin: 'center center',
         }}
       >
-        <div style={bracket('tl')} />
-        <div style={bracket('tr')} />
-        <div style={bracket('bl')} />
-        <div style={bracket('br')} />
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            transform: `translate(${shake.x.toFixed(2)}px, ${shake.y.toFixed(2)}px) rotate(${shake.rotateDeg.toFixed(3)}deg)`,
+            transformOrigin: 'center center',
+            willChange: hudShakeEnabled ? 'transform' : 'auto',
+          }}
+        >
+          <div style={bracket('tl')} />
+          <div style={bracket('tr')} />
+          <div style={bracket('bl')} />
+          <div style={bracket('br')} />
 
-        <TopLeftStatus sample={sample} currentTime={elapsed} />
-        <TopRightPosition sample={sample} />
-        <Minimap
-          track={track}
-          sample={sample}
-          currentTime={trackTime}
-          playerName={profile.name}
-        />
-        <Speedometer sample={sample} unit={unit} rpmMax={rpmMax} />
+          <TopLeftStatus sample={sample} currentTime={elapsed} />
+          <TopRightPosition sample={sample} />
+          <Minimap
+            track={track}
+            sample={sample}
+            currentTime={trackTime}
+            playerName={profile.name}
+          />
+          <Speedometer sample={sample} unit={unit} rpmMax={rpmMax} />
+        </div>
       </div>
     </div>
   );

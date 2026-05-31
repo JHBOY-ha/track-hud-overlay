@@ -186,6 +186,8 @@ export async function main() {
   const MINIMAP_RADIUS = arg('minimap-radius', null);
   const MINIMAP_TILT = arg('minimap-tilt', null);
   const MINIMAP_STROKE = arg('minimap-stroke', null);
+  const HUD_SHAKE = arg('hud-shake', null);
+  const HUD_SHAKE_INTENSITY = arg('hud-shake-intensity', null);
   const OUT = arg('out', 'out/hud.webm');
 
   const localFiles = [RAW_TELEMETRY, RAW_TRACK].filter(isLocalFileArg);
@@ -265,6 +267,11 @@ export async function main() {
     setNumParam('minimapViewRadiusM', MINIMAP_RADIUS);
     setNumParam('minimapTiltDeg', MINIMAP_TILT);
     setNumParam('minimapStrokeWidth', MINIMAP_STROKE);
+    if (HUD_SHAKE !== null) {
+      const v = String(HUD_SHAKE).trim().toLowerCase();
+      url.searchParams.set('hudShake', v === '1' || v === 'true' ? '1' : '0');
+    }
+    setNumParam('hudShakeIntensity', HUD_SHAKE_INTENSITY);
 
     console.log(`[export] opening ${url}`);
     const browser = await puppeteer.launch({
