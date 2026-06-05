@@ -543,8 +543,6 @@ export function App() {
             videoHeight={videoHeight}
             telemetryUrl={telemetryUrl}
             trackUrl={trackUrl}
-            hasTelemetry={!!telemetry}
-            hasTrack={!!track}
           />
           <Timeline />
           {error && (
@@ -578,8 +576,6 @@ function Toolbar({
   videoHeight,
   telemetryUrl,
   trackUrl,
-  hasTelemetry,
-  hasTrack,
 }: {
   unit: SpeedUnit;
   canEnrichTrack: boolean;
@@ -589,8 +585,6 @@ function Toolbar({
   videoHeight: number;
   telemetryUrl: string | null;
   trackUrl: string | null;
-  hasTelemetry: boolean;
-  hasTrack: boolean;
 }) {
   const profile = usePlayback(s => s.profile);
   const editMode = usePlayback(s => s.editMode);
@@ -725,8 +719,8 @@ function Toolbar({
             player={profile.name}
             defaultWidth={videoWidth > 0 ? videoWidth : 1920}
             defaultHeight={videoHeight > 0 ? videoHeight : 1080}
-            defaultTelemetryUrl={telemetryUrl ?? (hasTelemetry ? '' : '/samples/telemetry.csv')}
-            defaultTrackUrl={trackUrl ?? (hasTrack ? '' : '/samples/track.gpx')}
+            defaultTelemetryUrl={telemetryUrl ?? ''}
+            defaultTrackUrl={trackUrl ?? ''}
             onClose={() => setExportOpen(false)}
           />
         )}
@@ -957,7 +951,7 @@ function ExportSettingsPanel({
   const [copied, setCopied] = useState(false);
   const missingTelemetryExportUrl = telemetryUrl.trim() === '';
   const missingTrackExportUrl = trackUrl.trim() === '';
-  const missingExportUrl = missingTelemetryExportUrl || missingTrackExportUrl;
+  const missingAllExportUrls = missingTelemetryExportUrl && missingTrackExportUrl;
 
   const presetValue = useMemo(() => {
     const idx = RESOLUTION_PRESETS.findIndex(p => p.w === width && p.h === height);
@@ -1184,7 +1178,7 @@ function ExportSettingsPanel({
       </label>
 
       <label style={labelStyle}>
-        telemetry URL (请填写绝对路径)
+        telemetry URL（可留空）
         <input
           value={telemetryUrl}
           onChange={e => setTelemetryUrl(e.target.value)}
@@ -1192,16 +1186,12 @@ function ExportSettingsPanel({
         />
       </label>
       <label style={labelStyle}>
-        track URL (请填写绝对路径)
+        track URL（可留空）
         <input value={trackUrl} onChange={e => setTrackUrl(e.target.value)} style={inputStyle} />
       </label>
-      {missingExportUrl && (
+      {missingAllExportUrls && (
         <div style={{ fontSize: 11, color: '#d6a84f', lineHeight: 1.4 }}>
-          {[
-            missingTelemetryExportUrl ? 'telemetry URL 为空' : null,
-            missingTrackExportUrl ? 'track URL 为空' : null,
-          ].filter(Boolean).join('，')}
-          ；请填写 preview 可访问的路径，例如 /samples/telemetry.csv 或 /output/track.geojson。
+          telemetry 与 track 均为空，导出内容不会包含遥测或轨迹数据。
         </div>
       )}
       <label style={labelStyle}>

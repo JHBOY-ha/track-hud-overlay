@@ -232,8 +232,8 @@ export async function main() {
     const puppeteer = await import('puppeteer').then(m => m.default);
 
     const url = new URL(BASE);
-    url.searchParams.set('telemetry', TELEMETRY);
-    url.searchParams.set('track', TRACK);
+    if (TELEMETRY) url.searchParams.set('telemetry', TELEMETRY);
+    if (TRACK) url.searchParams.set('track', TRACK);
     url.searchParams.set('exporter', '1');
     url.searchParams.set('unit', UNIT);
     url.searchParams.set('player', PLAYER);
@@ -293,14 +293,14 @@ export async function main() {
       { timeout: 10000 },
     );
     await page.waitForFunction(
-      hasTrack => {
+      ({ hasTelemetry, hasTrack }) => {
         const s = window.__hudState?.();
-        const telemetryReady = s?.telemetry && s.telemetry.samples?.length > 0;
+        const telemetryReady = !hasTelemetry || (s?.telemetry && s.telemetry.samples?.length > 0);
         const trackReady = !hasTrack || (s?.track && s.track.points?.length > 0);
         return telemetryReady && trackReady;
       },
       {},
-      Boolean(TRACK),
+      { hasTelemetry: Boolean(TELEMETRY), hasTrack: Boolean(TRACK) },
     ).catch(() => new Promise(r => setTimeout(r, 1500)));
     await page.waitForFunction(
       () => {

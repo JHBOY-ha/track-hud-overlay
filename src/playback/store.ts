@@ -20,11 +20,11 @@ export interface WidgetState {
 export type Layout = Record<WidgetId, WidgetState>;
 
 const DEFAULT_LAYOUT: Layout = {
-  'topLeft.progress': { x: 0, y: 0, scale: 1 },
-  'topRight.position': { x: 0, y: 0, scale: 1 },
-  'minimap.disc': { x: 0, y: 0, scale: 1 },
-  'minimap.name': { x: 0, y: 0, scale: 1 },
-  'speedo.gauge': { x: 0, y: 0, scale: 1 },
+  'topLeft.progress': { x: 90, y: 50, scale: 0.85 },
+  'topRight.position': { x: -90, y: 50, scale: 0.85 },
+  'minimap.disc': { x: 90, y: -50, scale: 0.85 },
+  'minimap.name': { x: 90, y: -50, scale: 0.85 },
+  'speedo.gauge': { x: -90, y: -50, scale: 0.85 },
 };
 
 const LAYOUT_KEY = 'hud5.layout.v1';
@@ -115,12 +115,13 @@ function normalizeLayout(parsed: unknown): Layout {
   if (parsed && typeof parsed === 'object') {
     for (const id of Object.keys(DEFAULT_LAYOUT) as WidgetId[]) {
       const v = (parsed as Record<string, unknown>)[id];
+      const fallback = DEFAULT_LAYOUT[id];
       if (v && typeof v === 'object') {
         const rec = v as Record<string, unknown>;
         out[id] = {
-          x: typeof rec.x === 'number' ? rec.x : 0,
-          y: typeof rec.y === 'number' ? rec.y : 0,
-          scale: typeof rec.scale === 'number' && rec.scale > 0 ? rec.scale : 1,
+          x: typeof rec.x === 'number' ? rec.x : fallback.x,
+          y: typeof rec.y === 'number' ? rec.y : fallback.y,
+          scale: typeof rec.scale === 'number' && rec.scale > 0 ? rec.scale : fallback.scale,
         };
       }
     }

@@ -18,6 +18,11 @@ test('normalizeMediaArg removes accidental literal shell quotes', () => {
   );
 });
 
+test('normalizeMediaArg preserves an empty optional media argument', () => {
+  assert.equal(normalizeMediaArg(''), '');
+  assert.equal(normalizeMediaArg("''"), '');
+});
+
 test('localFileUrlFor maps absolute local paths to the export file server', () => {
   const dir = mkdtempSync(join(tmpdir(), 'hud5-export-test-'));
   const file = join(dir, 'a b.csv');
