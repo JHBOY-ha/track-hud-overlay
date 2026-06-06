@@ -103,6 +103,7 @@ struct ContentView: View {
                 disconnectedMarkIDs: model.disconnectedMarkIDs,
                 command: model.mapCommand,
                 commandRevision: model.mapCommandRevision,
+                contentRevision: model.mapContentRevision,
                 onClick: model.clickMap
             )
 

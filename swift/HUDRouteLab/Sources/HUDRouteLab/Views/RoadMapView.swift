@@ -15,6 +15,7 @@ struct RoadMapView: NSViewRepresentable {
     var disconnectedMarkIDs: Set<Int>
     var command: MapCommand
     var commandRevision: Int
+    var contentRevision: Int
     var onClick: (GeoPoint) -> Void
 
     func makeNSView(context: Context) -> RoadMapNSView {
@@ -24,15 +25,22 @@ struct RoadMapView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: RoadMapNSView, context: Context) {
-        view.roads = roads
-        view.route = route
-        view.importedTrack = importedTrack
-        view.snapPreview = snapPreview
+        if view.contentRevision != contentRevision {
+            view.contentRevision = contentRevision
+            view.roads = roads
+            view.route = route
+            view.importedTrack = importedTrack
+            view.snapPreview = snapPreview
+            view.marks = marks
+            view.invalidateCachedPaths()
+        }
         view.importedCursorPoint = importedCursorPoint
         view.snappedCursorPoint = snappedCursorPoint
-        view.marks = marks
-        view.centerPoint = center
-        view.radiusM = radiusM
+        if view.centerPoint != center || view.radiusM != radiusM {
+            view.centerPoint = center
+            view.radiusM = radiusM
+            view.invalidateCachedPaths()
+        }
         view.selectedMarkID = selectedMarkID
         view.disconnectedMarkIDs = disconnectedMarkIDs
         view.onClick = onClick
@@ -62,16 +70,27 @@ final class RoadMapNSView: NSView {
     var disconnectedMarkIDs: Set<Int> = []
     var onClick: ((GeoPoint) -> Void)?
     var commandRevision = 0
+    var contentRevision = -1
 
     private var scale = 1.0
     private var offset = CGPoint.zero
     private var dragStart: CGPoint?
     private var dragOrigin = CGPoint.zero
     private var dragged = false
+    private var cachedMajorRoads: NSBezierPath?
+    private var cachedMinorRoads: NSBezierPath?
+    private var cachedImportedTrack: NSBezierPath?
+    private var cachedSnapPreview: NSBezierPath?
+    private var cachedRoute: NSBezierPath?
 
     override var isFlipped: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func layout() {
+        super.layout()
+        invalidateCachedPaths()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -79,10 +98,12 @@ final class RoadMapNSView: NSView {
         dirtyRect.fill()
         guard bounds.width > 0, bounds.height > 0 else { return }
         drawGrid()
-        for road in roads { drawPolyline(road.points.map(\.geo), color: roadColor(road.highway), width: roadWidth(road.highway)) }
-        drawPolyline(importedTrack, color: NSColor.systemBlue.withAlphaComponent(0.8), width: 3, dashPattern: [7, 5])
-        drawPolyline(snapPreview, color: NSColor.systemGreen.withAlphaComponent(0.9), width: 4)
-        drawPolyline(route, color: NSColor.controlAccentColor, width: 4)
+        rebuildCachedPathsIfNeeded()
+        stroke(cachedMinorRoads, color: NSColor.secondaryLabelColor.withAlphaComponent(0.48), width: 2)
+        stroke(cachedMajorRoads, color: NSColor.labelColor.withAlphaComponent(0.58), width: 4)
+        stroke(cachedImportedTrack, color: NSColor.systemBlue.withAlphaComponent(0.8), width: 3, dashPattern: [7, 5])
+        stroke(cachedSnapPreview, color: NSColor.systemGreen.withAlphaComponent(0.9), width: 4)
+        stroke(cachedRoute, color: NSColor.controlAccentColor, width: 4)
         if let importedCursorPoint {
             drawCursorPoint(importedCursorPoint, color: .systemBlue, filled: false)
         }
@@ -111,6 +132,7 @@ final class RoadMapNSView: NSView {
         let point = convert(event.locationInWindow, from: nil)
         if hypot(point.x - start.x, point.y - start.y) > 3 { dragged = true }
         offset = CGPoint(x: dragOrigin.x + point.x - start.x, y: dragOrigin.y + point.y - start.y)
+        invalidateCachedPaths()
         needsDisplay = true
     }
 
@@ -135,6 +157,7 @@ final class RoadMapNSView: NSView {
     func resetView() {
         scale = 1
         offset = .zero
+        invalidateCachedPaths()
         needsDisplay = true
     }
 
@@ -150,6 +173,7 @@ final class RoadMapNSView: NSView {
             x: point.x - (point.x - offset.x) * applied,
             y: point.y - (point.y - offset.y) * applied
         )
+        invalidateCachedPaths()
         needsDisplay = true
     }
 
@@ -183,17 +207,46 @@ final class RoadMapNSView: NSView {
         )
     }
 
-    private func drawPolyline(_ points: [GeoPoint], color: NSColor, width: CGFloat, dashPattern: [CGFloat] = []) {
-        guard points.count > 1 else { return }
+    func invalidateCachedPaths() {
+        cachedMajorRoads = nil
+        cachedMinorRoads = nil
+        cachedImportedTrack = nil
+        cachedSnapPreview = nil
+        cachedRoute = nil
+    }
+
+    private func rebuildCachedPathsIfNeeded() {
+        guard cachedMajorRoads == nil else { return }
+        let major = NSBezierPath()
+        let minor = NSBezierPath()
+        for road in roads {
+            append(road.points.map(\.geo), to: isMajorRoad(road.highway) ? major : minor)
+        }
+        cachedMajorRoads = major
+        cachedMinorRoads = minor
+        cachedImportedTrack = path(for: importedTrack)
+        cachedSnapPreview = path(for: snapPreview)
+        cachedRoute = path(for: route)
+    }
+
+    private func path(for points: [GeoPoint]) -> NSBezierPath {
         let path = NSBezierPath()
+        append(points, to: path)
+        return path
+    }
+
+    private func append(_ points: [GeoPoint], to path: NSBezierPath) {
+        guard points.count > 1 else { return }
+        path.move(to: mapToScreen(project(points[0])))
+        for point in points.dropFirst() { path.line(to: mapToScreen(project(point))) }
+    }
+
+    private func stroke(_ path: NSBezierPath?, color: NSColor, width: CGFloat, dashPattern: [CGFloat] = []) {
+        guard let path, !path.isEmpty else { return }
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         path.lineWidth = width
-        if !dashPattern.isEmpty {
-            path.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
-        }
-        path.move(to: mapToScreen(project(points[0])))
-        for point in points.dropFirst() { path.line(to: mapToScreen(project(point))) }
+        path.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
         color.setStroke()
         path.stroke()
     }
@@ -243,13 +296,7 @@ final class RoadMapNSView: NSView {
         path.stroke()
     }
 
-    private func roadColor(_ highway: String) -> NSColor {
+    private func isMajorRoad(_ highway: String) -> Bool {
         ["primary", "secondary", "tertiary"].contains(highway)
-            ? NSColor.labelColor.withAlphaComponent(0.58)
-            : NSColor.secondaryLabelColor.withAlphaComponent(0.48)
-    }
-
-    private func roadWidth(_ highway: String) -> CGFloat {
-        ["primary", "secondary", "tertiary"].contains(highway) ? 4 : 2
     }
 }
