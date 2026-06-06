@@ -8,6 +8,9 @@ struct RoadMapView: NSViewRepresentable {
     var center: GeoPoint
     var radiusM: Double
     var selectedMarkID: Int?
+    var disconnectedMarkIDs: Set<Int>
+    var command: MapCommand
+    var commandRevision: Int
     var onClick: (GeoPoint) -> Void
 
     func makeNSView(context: Context) -> RoadMapNSView {
@@ -23,15 +26,17 @@ struct RoadMapView: NSViewRepresentable {
         view.centerPoint = center
         view.radiusM = radiusM
         view.selectedMarkID = selectedMarkID
+        view.disconnectedMarkIDs = disconnectedMarkIDs
         view.onClick = onClick
+        if view.commandRevision != commandRevision {
+            view.commandRevision = commandRevision
+            switch command {
+            case .none: break
+            case .reset: view.resetView()
+            case .zoom(let factor): view.zoomFromCenter(by: factor)
+            }
+        }
         view.needsDisplay = true
-    }
-
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: RoadMapNSView, context: Context) -> CGSize? {
-        CGSize(
-            width: proposal.width?.isFinite == true ? proposal.width! : 900,
-            height: proposal.height?.isFinite == true ? proposal.height! : 620
-        )
     }
 }
 
@@ -42,7 +47,9 @@ final class RoadMapNSView: NSView {
     var centerPoint = GeoPoint(lat: 0, lon: 0)
     var radiusM = 1000.0
     var selectedMarkID: Int?
+    var disconnectedMarkIDs: Set<Int> = []
     var onClick: ((GeoPoint) -> Void)?
+    var commandRevision = 0
 
     private var scale = 1.0
     private var offset = CGPoint.zero
@@ -51,19 +58,24 @@ final class RoadMapNSView: NSView {
     private var dragged = false
 
     override var isFlipped: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 900, height: 620) }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        NSColor(calibratedRed: 0.025, green: 0.055, blue: 0.045, alpha: 1).setFill()
+        NSColor.controlBackgroundColor.setFill()
         dirtyRect.fill()
         guard bounds.width > 0, bounds.height > 0 else { return }
         drawGrid()
         for road in roads { drawPolyline(road.points.map(\.geo), color: roadColor(road.highway), width: roadWidth(road.highway)) }
-        drawPolyline(route, color: NSColor(calibratedRed: 0.20, green: 0.93, blue: 0.57, alpha: 1), width: 4)
+        drawPolyline(route, color: NSColor.controlAccentColor, width: 4)
         for (index, mark) in marks.sorted(by: { $0.time < $1.time }).enumerated() {
-            drawMark(mark, label: "T\(index + 1)", selected: mark.id == selectedMarkID)
+            drawMark(
+                mark,
+                label: "T\(index + 1)",
+                selected: mark.id == selectedMarkID,
+                disconnected: disconnectedMarkIDs.contains(mark.id)
+            )
         }
         drawCenter()
     }
@@ -106,6 +118,10 @@ final class RoadMapNSView: NSView {
         needsDisplay = true
     }
 
+    func zoomFromCenter(by factor: Double) {
+        zoom(by: factor, around: CGPoint(x: bounds.midX, y: bounds.midY))
+    }
+
     private func zoom(by factor: Double, around point: CGPoint) {
         let oldScale = scale
         scale = min(24, max(0.5, scale * factor))
@@ -127,17 +143,23 @@ final class RoadMapNSView: NSView {
 
     private func project(_ point: GeoPoint) -> CGPoint {
         let bounds = MapBounds(center: centerPoint, radiusM: radiusM)
+        let side = max(1, min(self.bounds.width, self.bounds.height))
+        let originX = (self.bounds.width - side) / 2
+        let originY = (self.bounds.height - side) / 2
         return CGPoint(
-            x: (point.lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * self.bounds.width,
-            y: self.bounds.height - (point.lat - bounds.minLat) / (bounds.maxLat - bounds.minLat) * self.bounds.height
+            x: originX + (point.lon - bounds.minLon) / (bounds.maxLon - bounds.minLon) * side,
+            y: originY + side - (point.lat - bounds.minLat) / (bounds.maxLat - bounds.minLat) * side
         )
     }
 
     private func unproject(_ point: CGPoint) -> GeoPoint {
         let bounds = MapBounds(center: centerPoint, radiusM: radiusM)
+        let side = max(1, min(self.bounds.width, self.bounds.height))
+        let originX = (self.bounds.width - side) / 2
+        let originY = (self.bounds.height - side) / 2
         return GeoPoint(
-            lat: bounds.minLat + (self.bounds.height - point.y) / self.bounds.height * (bounds.maxLat - bounds.minLat),
-            lon: bounds.minLon + point.x / self.bounds.width * (bounds.maxLon - bounds.minLon)
+            lat: bounds.minLat + (side - (point.y - originY)) / side * (bounds.maxLat - bounds.minLat),
+            lon: bounds.minLon + (point.x - originX) / side * (bounds.maxLon - bounds.minLon)
         )
     }
 
@@ -161,16 +183,17 @@ final class RoadMapNSView: NSView {
         while x < bounds.width { path.move(to: CGPoint(x: x, y: 0)); path.line(to: CGPoint(x: x, y: bounds.height)); x += step }
         var y = offset.y.truncatingRemainder(dividingBy: step)
         while y < bounds.height { path.move(to: CGPoint(x: 0, y: y)); path.line(to: CGPoint(x: bounds.width, y: y)); y += step }
-        NSColor.white.withAlphaComponent(0.035).setStroke()
+        NSColor.separatorColor.withAlphaComponent(0.28).setStroke()
         path.stroke()
     }
 
-    private func drawMark(_ mark: RouteMark, label: String, selected: Bool) {
+    private func drawMark(_ mark: RouteMark, label: String, selected: Bool, disconnected: Bool) {
         let point = mapToScreen(project(mark.point))
         let rect = CGRect(x: point.x - 7, y: point.y - 7, width: 14, height: 14)
-        (selected ? NSColor.systemGreen : NSColor.systemOrange).setFill()
+        let color = disconnected ? NSColor.systemRed : (selected ? NSColor.systemGreen : NSColor.systemOrange)
+        color.setFill()
         NSBezierPath(ovalIn: rect).fill()
-        let attrs: [NSAttributedString.Key: Any] = [.foregroundColor: NSColor.systemOrange, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)]
+        let attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)]
         label.draw(at: CGPoint(x: point.x + 10, y: point.y - 7), withAttributes: attrs)
     }
 
@@ -179,12 +202,14 @@ final class RoadMapNSView: NSView {
         let path = NSBezierPath()
         path.move(to: CGPoint(x: point.x - 10, y: point.y)); path.line(to: CGPoint(x: point.x + 10, y: point.y))
         path.move(to: CGPoint(x: point.x, y: point.y - 10)); path.line(to: CGPoint(x: point.x, y: point.y + 10))
-        NSColor.systemGreen.setStroke()
+        NSColor.controlAccentColor.setStroke()
         path.stroke()
     }
 
     private func roadColor(_ highway: String) -> NSColor {
-        ["primary", "secondary", "tertiary"].contains(highway) ? NSColor(calibratedWhite: 0.48, alpha: 1) : NSColor(calibratedWhite: 0.30, alpha: 1)
+        ["primary", "secondary", "tertiary"].contains(highway)
+            ? NSColor.labelColor.withAlphaComponent(0.58)
+            : NSColor.secondaryLabelColor.withAlphaComponent(0.48)
     }
 
     private func roadWidth(_ highway: String) -> CGFloat {
