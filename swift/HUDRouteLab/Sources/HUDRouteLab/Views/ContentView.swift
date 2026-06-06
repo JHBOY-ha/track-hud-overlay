@@ -10,13 +10,13 @@ struct ContentView: View {
                 .navigationSplitViewColumnWidth(min: 250, ideal: 285, max: 340)
         } detail: {
             mapEditor
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    TimelinePanel(model: model)
+                }
                 .inspector(isPresented: $showsInspector) {
                     RouteInspectorView(model: model)
                         .inspectorColumnWidth(min: 250, ideal: 285, max: 340)
                 }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            TimelinePanel(model: model)
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {
