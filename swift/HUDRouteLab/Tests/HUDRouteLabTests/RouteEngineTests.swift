@@ -3,6 +3,33 @@ import Testing
 @testable import HUDRouteLab
 
 struct RouteEngineTests {
+    @Test @MainActor func timelineWindowClampsAndRevealsCursor() {
+        let model = RouteLabModel()
+        model.cursorSeconds = 23 * 3600
+        model.setTimelineHours(3)
+        #expect(model.timelineStartSeconds == 21 * 3600)
+        #expect(model.timelineEndSeconds == 86_399)
+
+        model.cursorSeconds = 30 * 60
+        model.revealCursor()
+        #expect(model.timelineStartSeconds == 0)
+    }
+
+    @Test func parsesSharedOSMNodesForRouting() throws {
+        let xml = """
+        <osm version="0.6">
+          <node id="1" lat="0" lon="0"/>
+          <node id="2" lat="0" lon="0.001"/>
+          <node id="3" lat="0.001" lon="0.001"/>
+          <way id="10"><nd ref="1"/><nd ref="2"/><tag k="highway" v="residential"/></way>
+          <way id="11"><nd ref="2"/><nd ref="3"/><tag k="highway" v="residential"/></way>
+        </osm>
+        """
+        let roads = try OSMXMLParser.parse(Data(xml.utf8))
+        #expect(roads.count == 2)
+        #expect(roads[0].points.last?.nodeID == roads[1].points.first?.nodeID)
+    }
+
     @Test func projectsToRoadSegmentInsteadOfEndpoint() {
         let road = Road(
             id: "1",
@@ -21,6 +48,7 @@ struct RouteEngineTests {
 
         #expect(projection != nil)
         #expect(abs((projection?.point.lon ?? 0) - 0.005) < 0.00001)
+        #expect((projection?.distanceM ?? 0) > 100)
     }
 
     @Test func samplesConnectedRouteAtTenHertz() throws {

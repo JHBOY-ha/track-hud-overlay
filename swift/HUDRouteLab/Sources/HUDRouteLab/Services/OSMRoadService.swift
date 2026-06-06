@@ -17,7 +17,7 @@ actor OSMRoadService {
     }
 }
 
-private final class OSMXMLParser: NSObject, XMLParserDelegate {
+final class OSMXMLParser: NSObject, XMLParserDelegate {
     private var nodes: [String: RoadPoint] = [:]
     private var roads: [Road] = []
     private var currentWayID: String?

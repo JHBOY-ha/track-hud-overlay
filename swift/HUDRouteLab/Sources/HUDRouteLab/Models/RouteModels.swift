@@ -48,6 +48,7 @@ struct RoadProjection: Equatable, Sendable {
     var segmentIndex: Int
     var segmentT: Double
     var point: GeoPoint
+    var distanceM: Double
 }
 
 struct MapBounds: Equatable, Sendable {

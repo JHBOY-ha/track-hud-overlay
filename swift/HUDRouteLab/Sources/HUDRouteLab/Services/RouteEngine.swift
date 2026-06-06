@@ -6,6 +6,47 @@ enum RouteEngine {
         var distance: Double
     }
 
+    private struct QueueItem {
+        var key: String
+        var distance: Double
+    }
+
+    private struct MinHeap {
+        private var items: [QueueItem] = []
+
+        var isEmpty: Bool { items.isEmpty }
+
+        mutating func push(_ item: QueueItem) {
+            items.append(item)
+            var index = items.count - 1
+            while index > 0 {
+                let parent = (index - 1) / 2
+                guard items[index].distance < items[parent].distance else { break }
+                items.swapAt(index, parent)
+                index = parent
+            }
+        }
+
+        mutating func pop() -> QueueItem? {
+            guard !items.isEmpty else { return nil }
+            if items.count == 1 { return items.removeLast() }
+            let result = items[0]
+            items[0] = items.removeLast()
+            var index = 0
+            while true {
+                let left = index * 2 + 1
+                let right = left + 1
+                var smallest = index
+                if left < items.count, items[left].distance < items[smallest].distance { smallest = left }
+                if right < items.count, items[right].distance < items[smallest].distance { smallest = right }
+                guard smallest != index else { break }
+                items.swapAt(index, smallest)
+                index = smallest
+            }
+            return result
+        }
+    }
+
     static func distanceM(_ a: GeoPoint, _ b: GeoPoint) -> Double {
         let lat = (a.lat + b.lat) / 2 * .pi / 180
         let dx = (b.lon - a.lon) * 111_320 * cos(lat)
@@ -34,7 +75,13 @@ enum RouteEngine {
                 let point = GeoPoint(lat: a.lat + (b.lat - a.lat) * t, lon: a.lon + (b.lon - a.lon) * t)
                 let distance = distanceM(target, point)
                 if best == nil || distance < best!.1 {
-                    best = (RoadProjection(roadID: road.id, segmentIndex: index, segmentT: t, point: point), distance)
+                    best = (RoadProjection(
+                        roadID: road.id,
+                        segmentIndex: index,
+                        segmentT: t,
+                        point: point,
+                        distanceM: distance
+                    ), distance)
                 }
             }
         }
@@ -110,17 +157,19 @@ enum RouteEngine {
         if start == end, let point = points[start] { return [point] }
         var distances = [start: 0.0]
         var previous: [String: String] = [:]
-        var queue = Set(graph.keys)
-        while !queue.isEmpty {
-            guard let current = queue.min(by: { (distances[$0] ?? .infinity) < (distances[$1] ?? .infinity) }) else { break }
-            let currentDistance = distances[current] ?? .infinity
-            if currentDistance == .infinity || current == end { break }
-            queue.remove(current)
-            for edge in graph[current] ?? [] {
-                let next = currentDistance + edge.distance
+        var visited: Set<String> = []
+        var queue = MinHeap()
+        queue.push(QueueItem(key: start, distance: 0))
+        while let item = queue.pop() {
+            if visited.contains(item.key) { continue }
+            visited.insert(item.key)
+            if item.key == end { break }
+            for edge in graph[item.key] ?? [] {
+                let next = item.distance + edge.distance
                 if next < (distances[edge.to] ?? .infinity) {
                     distances[edge.to] = next
-                    previous[edge.to] = current
+                    previous[edge.to] = item.key
+                    queue.push(QueueItem(key: edge.to, distance: next))
                 }
             }
         }
