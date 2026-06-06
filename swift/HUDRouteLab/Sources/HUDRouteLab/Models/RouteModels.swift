@@ -36,20 +36,29 @@ struct ImportedTrack: Equatable, Sendable {
     }
 
     func point(at seconds: Double, coordinates: [GeoPoint]? = nil) -> GeoPoint? {
-        let source = coordinates ?? self.coordinates
-        let times = timelineSeconds
+        point(at: seconds, coordinates: coordinates ?? self.coordinates, timelineSeconds: timelineSeconds)
+    }
+
+    func point(at seconds: Double, coordinates source: [GeoPoint], timelineSeconds times: [Double]) -> GeoPoint? {
         guard source.count == times.count, let first = source.first else { return nil }
         if seconds <= times[0] { return first }
         if seconds >= times[times.count - 1] { return source.last }
-        for index in 1..<times.count where seconds <= times[index] {
-            let duration = times[index] - times[index - 1]
-            let fraction = duration > 0 ? (seconds - times[index - 1]) / duration : 0
-            return GeoPoint(
-                lat: source[index - 1].lat + (source[index].lat - source[index - 1].lat) * fraction,
-                lon: source[index - 1].lon + (source[index].lon - source[index - 1].lon) * fraction
-            )
+        var low = 1
+        var high = times.count - 1
+        while low < high {
+            let middle = (low + high) / 2
+            if times[middle] < seconds {
+                low = middle + 1
+            } else {
+                high = middle
+            }
         }
-        return source.last
+        let duration = times[low] - times[low - 1]
+        let fraction = duration > 0 ? (seconds - times[low - 1]) / duration : 0
+        return GeoPoint(
+            lat: source[low - 1].lat + (source[low].lat - source[low - 1].lat) * fraction,
+            lon: source[low - 1].lon + (source[low].lon - source[low - 1].lon) * fraction
+        )
     }
 
     private var evenlyDistributedTimeline: [Double] {

@@ -157,6 +157,37 @@ struct RouteEngineTests {
         #expect(track.timelineSeconds == [0, 43_199.5, 86_399])
     }
 
+    @Test func interpolatesLargeImportedTrackUsingCachedTimelineData() {
+        let points = (0...10_000).map {
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: Double($0) / 10_000), time: nil)
+        }
+        let track = ImportedTrack(name: "large", points: points)
+        let coordinates = track.coordinates
+        let timeline = track.timelineSeconds
+
+        let middle = track.point(at: 43_199.5, coordinates: coordinates, timelineSeconds: timeline)
+
+        #expect(abs((middle?.lon ?? 0) - 0.5) < 0.000001)
+    }
+
+    @Test func snapsLargeTrackAgainstIndexedRoadNetwork() {
+        let roads = (0..<200).map { index in
+            let latitude = Double(index) * 0.001
+            return Road(id: "\(index)", name: "", highway: "residential", points: [
+                RoadPoint(nodeID: "\(index)-a", lat: latitude, lon: 0),
+                RoadPoint(nodeID: "\(index)-b", lat: latitude, lon: 0.02),
+            ])
+        }
+        let points = (0..<1_000).map {
+            GeoPoint(lat: 0.00005, lon: Double($0) / 1_000 * 0.02)
+        }
+
+        let preview = RouteEngine.buildSnapPreview(points: points, roads: roads, maximumDistanceM: 20)
+
+        #expect(preview.snappedCount == points.count)
+        #expect(preview.points.allSatisfy { abs($0.lat) < 0.000001 })
+    }
+
     @Test func samplesConnectedRouteAtTenHertz() throws {
         let road = Road(
             id: "1",

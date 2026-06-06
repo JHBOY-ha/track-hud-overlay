@@ -10,13 +10,21 @@ final class RouteLabModel {
     var longitude = 116.405
     var radiusM = 1000.0
     var roads: [Road] = []
-    var importedTrack: ImportedTrack?
+    var importedTrack: ImportedTrack? {
+        didSet {
+            importedCoordinates = importedTrack?.coordinates ?? []
+            importedTimelineSeconds = importedTrack?.timelineSeconds ?? []
+            mapContentRevision += 1
+        }
+    }
+    private(set) var importedCoordinates: [GeoPoint] = []
+    private var importedTimelineSeconds: [Double] = []
     var snapPreview: SnapPreview = .empty
     var snapDistanceM = 30.0 {
         didSet { rebuildSnapPreview() }
     }
-    var showsOriginalTrack = true
-    var showsSnapPreview = true
+    var showsOriginalTrack = true { didSet { mapContentRevision += 1 } }
+    var showsSnapPreview = true { didSet { mapContentRevision += 1 } }
     var marks: [RouteMark] = []
     var route: RouteResult = .empty
     var cursorSeconds = 8.0 * 60 * 60
@@ -26,6 +34,7 @@ final class RouteLabModel {
     var selectedMarkID: Int?
     var mapCommandRevision = 0
     var mapCommand: MapCommand = .none
+    var mapContentRevision = 0
     var isLoading = false
     var status = "输入中心坐标和半径，然后获取周边路网。"
     private var nextID = 1
@@ -33,16 +42,26 @@ final class RouteLabModel {
     private var playbackTask: Task<Void, Never>?
 
     var center: GeoPoint { GeoPoint(lat: latitude, lon: longitude) }
-    var importedCoordinates: [GeoPoint] { importedTrack?.coordinates ?? [] }
-    var importedTimelineRange: ClosedRange<Double>? { importedTrack?.timelineRange }
+    var importedTimelineRange: ClosedRange<Double>? {
+        guard let first = importedTimelineSeconds.first, let last = importedTimelineSeconds.last else { return nil }
+        return first ... last
+    }
     var importedCursorPoint: GeoPoint? {
         guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
-        return importedTrack?.point(at: cursorSeconds)
+        return importedTrack?.point(
+            at: cursorSeconds,
+            coordinates: importedCoordinates,
+            timelineSeconds: importedTimelineSeconds
+        )
     }
     var snappedCursorPoint: GeoPoint? {
         guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
         guard snapPreview.points.count == importedTrack?.points.count else { return nil }
-        return importedTrack?.point(at: cursorSeconds, coordinates: snapPreview.points)
+        return importedTrack?.point(
+            at: cursorSeconds,
+            coordinates: snapPreview.points,
+            timelineSeconds: importedTimelineSeconds
+        )
     }
     var orderedMarks: [RouteMark] { marks.sorted { $0.time < $1.time } }
     var hasDuplicateTimes: Bool {
@@ -305,6 +324,7 @@ final class RouteLabModel {
 
     private func rebuildRoute() {
         route = RouteEngine.buildTimedRoute(roads: roads, marks: orderedMarks)
+        mapContentRevision += 1
     }
 
     func rebuildSnapPreview() {
@@ -313,6 +333,7 @@ final class RouteLabModel {
             roads: roads,
             maximumDistanceM: snapDistanceM
         )
+        mapContentRevision += 1
     }
 
     func export() {
