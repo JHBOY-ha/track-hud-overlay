@@ -26,6 +26,13 @@ struct RoadMapView: NSViewRepresentable {
         view.onClick = onClick
         view.needsDisplay = true
     }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: RoadMapNSView, context: Context) -> CGSize? {
+        CGSize(
+            width: proposal.width?.isFinite == true ? proposal.width! : 900,
+            height: proposal.height?.isFinite == true ? proposal.height! : 620
+        )
+    }
 }
 
 final class RoadMapNSView: NSView {
@@ -44,6 +51,7 @@ final class RoadMapNSView: NSView {
     private var dragged = false
 
     override var isFlipped: Bool { true }
+    override var intrinsicContentSize: NSSize { NSSize(width: 900, height: 620) }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {

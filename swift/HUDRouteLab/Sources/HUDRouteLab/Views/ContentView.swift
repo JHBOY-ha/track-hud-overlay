@@ -7,7 +7,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             controls
             Divider()
-            HSplitView {
+            HStack(spacing: 0) {
                 RoadMapView(
                     roads: model.roads,
                     route: model.route.path,
@@ -17,15 +17,16 @@ struct ContentView: View {
                     selectedMarkID: model.selectedMarkID,
                     onClick: model.clickMap
                 )
-                .frame(minWidth: 640, minHeight: 480)
+
+                Divider()
 
                 MarkInspectorView(model: model)
-                    .frame(minWidth: 270, idealWidth: 310, maxWidth: 360)
+                    .frame(width: 310)
             }
             Divider()
             timeline
         }
-        .frame(minWidth: 1050, minHeight: 720)
+        .frame(width: 1200, height: 760)
         .onReceive(NotificationCenter.default.publisher(for: .exportRoute)) { _ in
             model.export()
         }
@@ -90,7 +91,7 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Slider(value: $model.cursorSeconds, in: 0 ... 86_399, step: 0.1)
+            Slider(value: $model.cursorSeconds, in: 0 ... 86_399)
 
             HStack {
                 Text("00:00:00")

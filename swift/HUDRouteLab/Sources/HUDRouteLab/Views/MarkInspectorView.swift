@@ -74,8 +74,7 @@ struct MarkInspectorView: View {
                     get: { model.secondsForMark(mark.id) },
                     set: { model.updateMarkTime(mark.id, seconds: $0) }
                 ),
-                in: 0 ... 86_399,
-                step: 0.1
+                in: 0 ... 86_399
             )
 
             Text("\(mark.point.lat, specifier: "%.6f"), \(mark.point.lon, specifier: "%.6f")")

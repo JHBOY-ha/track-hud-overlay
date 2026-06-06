@@ -9,7 +9,7 @@ final class RouteLabModel {
     var radiusM = 1000.0
     var roads: [Road] = []
     var marks: [RouteMark] = []
-    var cursorTime = Calendar.current.date(bySettingHour: 8, minute: 0, second: 0, of: .now) ?? .now
+    var cursorSeconds = 8.0 * 60 * 60
     var selectedMarkID: Int?
     var isLoading = false
     var status = "Enter a center coordinate and radius, then fetch roads."
@@ -27,13 +27,8 @@ final class RouteLabModel {
     var statusIsError: Bool {
         status.localizedCaseInsensitiveContains("failed") || status.localizedCaseInsensitiveContains("invalid")
     }
-    var cursorSeconds: Double {
-        get {
-            cursorTime.timeIntervalSince(Calendar.current.startOfDay(for: cursorTime))
-        }
-        set {
-            cursorTime = Calendar.current.startOfDay(for: cursorTime).addingTimeInterval(newValue)
-        }
+    var cursorTime: Date {
+        Calendar.current.startOfDay(for: .now).addingTimeInterval(cursorSeconds)
     }
 
     func fetchRoads() {
