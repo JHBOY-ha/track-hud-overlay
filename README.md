@@ -29,8 +29,11 @@ npm run dev:route-lab
 - 支持 OSM 路网补全、轨迹点吸附到参考道路、可调小地图视野/俯视角/线宽
 - 支持 `km/h` / `MPH` 切换
 - 支持拖拽调整 HUD 组件位置，并保存到 `localStorage`
+- GPX 驱动的 HUD 抖动：从轨迹 G 力 + 速度相关道路噪声自动生成 cockpit shake
+- 头盔曲面效果：CSS 3D perspective 让 HUD 呈弧形深度感，模拟赛车头盔视野
 - 支持用 Puppeteer + FFmpeg 导出透明 WebM / ProRes 视频，MOV / MP4 导出会写入 timecode
-- 提供 OBD 长格式日志转换脚本
+- 提供 OBD 长格式日志、RaceChrono Pro CSV 转换脚本
+- HUD Route Lab：内置 GPX 路线编辑器，支持从 OSM 路网自动生成赛道
 
 ## 快速开始
 
@@ -61,6 +64,8 @@ npm run dev
 项目帧率可设为 `24 / 30 / 48 / 60 / 120`。时间轴显示为非 drop-frame timecode：`HH:MM:SS:FF`，120fps 时帧号使用三位。
 
 GPX 示例数据的起始时间码会按文件里的 ISO 时间映射到本地当天时间。例如 `2026-04-21T10:00:00.000Z` 在 `Asia/Shanghai` 会显示为 `18:00:00:00`。
+
+每条素材轨道支持独立的 **trim（裁剪）**：在时间轴拖拽素材左右边缘可以裁掉首尾不需要的段落，底层数据不变，仅影响播放和导出。
 
 ## 常用命令
 
@@ -140,6 +145,11 @@ GeoJSON 图层可以通过 `properties.kind` 或 `properties.type` 指定：
 
 GPX route 会被识别为 `planned`；普通 track 默认作为 `driven`。
 
+导入 GPX 时可以在高级设置中开启轨迹点过滤：
+
+- **最小距离**（米）：移除间距过近的连续点
+- **最大间隔**（秒）：在时间间隔过长的相邻点之间打断路径
+
 ### GPX 路网补全
 
 `scripts/enrich-gpx-with-osm.mjs` 可以从 GPX 轨迹范围下载 OpenStreetMap 路网，并输出适配小地图的 GeoJSON：
@@ -156,12 +166,39 @@ Web UI 中也可以先拖入 GPX，再点击顶部工具栏的“补全路网”
 node scripts/enrich-gpx-with-osm.mjs local/activity.gpx output --coord=gcj02
 ```
 
+命令行脚本支持按道路类型过滤（`--highway`）和按车道数/限速过滤（`--min-lanes`、`--max-speed`），只保留适合驾车的道路：
+
+```bash
+node scripts/enrich-gpx-with-osm.mjs local/activity.gpx output --highway=motorway,trunk,primary,secondary,tertiary
+```
+
 输出文件：
 
 - `*_enriched.geojson`：推荐加载到小地图；主轨迹为 `driven`，周边 OSM 道路为 `reference`
 - `*_enriched.gpx`：保留 GPX 轨迹，并在点位扩展里写入最近 OSM 道路信息
 - `*_enriched_points.csv`：每个轨迹点匹配到的最近 OSM 道路、距离和道路标签
 - `*_osm_bbox.osm`：OSM bbox 缓存；再次运行默认复用，传 `--refresh-osm` 可重新下载
+
+路网吸附使用 **HMM/Viterbi 地图匹配**算法，综合考虑轨迹点到道路的距离、方向一致性和路径连续性，比简单贪心最近匹配更鲁棒。
+
+## HUD Route Lab
+
+HUD Route Lab 是一个内置的 GPX 路线编辑器，运行在独立端口 `:5174`。它可以从 OpenStreetMap 路网自动生成闭合赛道，也可以手动编辑路线点，最终导出为 HUD 小地图可用的 GeoJSON。
+
+```bash
+npm run dev:route-lab
+# → http://127.0.0.1:5174/route-lab.html
+```
+
+功能：
+
+- 从 OSM 路网自动生成赛道，支持设定起点、长度、方向偏好
+- 交互式编辑路线控制点
+- 时间轴面板预览路线进度
+- 导出 GeoJSON（`planned` 图层类型），可直接拖入 HUD 编辑器使用
+
+> [!NOTE]
+> 另有一个原生 macOS 版本的 Route Lab（`swift/HUDRouteLab`），提供原生地图渲染和 AppKit 交互体验。详见 [swift/README.md](swift/README.md)。
 
 ## OBD 日志转换
 
@@ -263,10 +300,11 @@ node scripts/export-frames.mjs \
 
 这些 offset 会在导出页面中恢复，确保导出和预览一致。绝对路径输入文件会由导出脚本临时映射成本地 HTTP URL，因此可以直接传 `/Users/.../telemetry.csv` 这类路径。
 
-高级 HUD 设置（路网吸附、Minimap 半径/俯视角/线宽）通常存于浏览器 `localStorage`，由于导出 Puppeteer 实例是干净上下文，导出命令会显式带上：
+高级 HUD 设置（路网吸附、Minimap 半径/俯视角/线宽、HUD 抖动、头盔曲面）通常存于浏览器 `localStorage`，由于导出 Puppeteer 实例是干净上下文，导出命令会显式带上：
 
 ```bash
---snap-to-roads 1 --snap-max-dist 5 --minimap-radius 50 --minimap-tilt 70 --minimap-stroke 10
+--snap-to-roads 1 --snap-max-dist 5 --minimap-radius 50 --minimap-tilt 70 --minimap-stroke 10 \
+--hud-shake 1 --hud-shake-intensity 1 --hud-curvature 1 --hud-curvature-intensity 1
 ```
 
 复制面板里的命令会自动按当前设置填好这些参数。
@@ -308,6 +346,10 @@ node scripts/export-frames.mjs \
 | `minimapViewRadiusM`| Minimap 可视半径，米                             |
 | `minimapTiltDeg`    | Minimap 俯视角，度                               |
 | `minimapStrokeWidth`| Minimap 道路线宽，px                             |
+| `hudShake`          | HUD 抖动开关，`1` 或 `0`                         |
+| `hudShakeIntensity` | HUD 抖动强度，`0`–`8`                            |
+| `hudCurvature`      | 头盔曲面开关，`1` 或 `0`                         |
+| `hudCurvatureIntensity` | 头盔曲面强度，`0`–`3`                        |
 | `exporter=1`        | 开启透明导出模式，隐藏控制栏                     |
 
 ## 布局编辑
@@ -335,8 +377,10 @@ hud5.settings.v1
 高级设置当前包括：
 
 - 轨迹原始坐标系：`WGS-84`、`GCJ-02`、`BD-09`
-- 路径吸附：是否把实际行驶点吸附到 `reference` 道路，以及最大吸附距离
+- 路径吸附：是否把实际行驶点吸附到 `reference` 道路，以及最大吸附距离（算法：HMM/Viterbi 地图匹配）
 - 小地图：可视半径、俯视角和道路线宽
+- HUD 抖动：GPX G 力驱动的 cockpit shake 开关及强度（0–8），在编辑模式下自动暂停
+- 头盔曲面：CSS 3D perspective 效果开关及强度（0–3），模拟赛车头盔视野弧度
 
 如果布局错乱，可以点击“重置”恢复默认位置。
 
@@ -345,23 +389,34 @@ hud5.settings.v1
 ```text
 src/
   App.tsx                 # 应用外壳、文件加载、视频同步、工具栏和时间轴
+  routeLabMain.tsx        # HUD Route Lab 入口
   hud/                    # HUD 组件
-    Hud.tsx
-    Minimap.tsx
-    Speedometer.tsx
-    TopLeftStatus.tsx
-    TopRightPosition.tsx
-    Draggable.tsx
+    Hud.tsx               # HUD 根组件（抖动、曲面、角标）
+    Minimap.tsx           # 小地图
+    Speedometer.tsx       # 速度表
+    TopLeftStatus.tsx     # 左上：时间/进度/海拔
+    TopRightPosition.tsx  # 右上：名次/玩家名
+    Draggable.tsx         # 拖拽编辑
+    hudShake.ts           # GPX G 力驱动的 cockpit shake
+    helmetCurve.ts        # CSS 3D 头盔曲面变换
+    minimapViewport.ts    # 小地图视口常量与透视变换
+  generator/              # Route Lab 路线生成器
+    GpxGenerator.tsx      # 编辑器 UI
+    routeCore.ts          # OSM 路网路线生成核心
   data/                   # 遥测和轨迹解析
   playback/               # 播放状态、布局状态和 rAF 播放循环
   util/                   # 单位换算、坐标系转换、投影和导出 URL 工具
+route-lab.html            # Route Lab HTML 入口
 scripts/
   convert-obd-log.mjs     # OBD 长格式日志转换
+  convert-racechrono-csv.mjs # RaceChrono Pro CSV → telemetry + GPX
+  csv-to-gpx-50hz.mjs     # 高频 CSV 转 GPX 轨迹
   enrich-gpx-with-osm.mjs # GPX 路网补全和 OSM 匹配
   export-frames.mjs       # 透明 HUD 导出
   generate-sample.mjs     # 生成示例数据
 public/samples/           # 示例 telemetry 和 track
 design-ref/               # 视觉参考图
+swift/                    # 原生 macOS Swift 移植（详见 swift/README.md）
 ```
 ## 技术栈
 
