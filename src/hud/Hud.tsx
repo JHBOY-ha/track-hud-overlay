@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react';
 import { effectiveRange, usePlayback } from '../playback/store';
 import { sampleAt } from '../data/telemetry';
+import { progressAt } from '../data/track';
 import { Speedometer } from './Speedometer';
 import { Minimap } from './Minimap';
 import { TopLeftStatus } from './TopLeftStatus';
@@ -68,13 +69,14 @@ export function Hud() {
     [telemetry, currentTime, telemetryOffset, telemetryTrimStart, telemetryTrimEnd],
   );
   const trackTime = currentTime - trackOffset;
+  const trackProgress = sample?.progress ?? progressAt(track, trackTime) ?? undefined;
   const elapsed = currentTime - rangeStart;
   const shake = useMemo(
     () =>
       hudShakeEnabled && !editMode
         ? hudShakeAt(track, {
             time: trackTime,
-            progress: sample?.progress,
+            progress: trackProgress,
             trimStart: trackTrimStart,
             trimEnd: trackTrimEnd,
             intensity: hudShakeIntensity,
@@ -88,7 +90,7 @@ export function Hud() {
       trackTime,
       trackTrimStart,
       trackTrimEnd,
-      sample?.progress,
+      trackProgress,
     ],
   );
 
@@ -167,11 +169,11 @@ export function Hud() {
           <div style={curvedBracket('bl')} />
           <div style={curvedBracket('br')} />
 
-          <TopLeftStatus sample={sample} currentTime={elapsed} />
+          <TopLeftStatus sample={sample} currentTime={elapsed} trackProgress={trackProgress} />
           <TopRightPosition sample={sample} />
           <Minimap
             track={track}
-            sample={sample}
+            sample={sample ? { ...sample, progress: trackProgress } : trackProgress === undefined ? null : { t: trackTime, speedKmh: 0, progress: trackProgress }}
             currentTime={trackTime}
             playerName={profile.name}
           />

@@ -26,6 +26,7 @@ function distanceAtTime(points: TrackPoint[], trackOffset: number, t: number): n
 interface Props {
   sample: TelemetrySample | null;
   currentTime: number;
+  trackProgress?: number;
 }
 
 function formatElapsed(t: number): string {
@@ -39,7 +40,7 @@ function formatElapsed(t: number): string {
 const STRIP_W = 300;
 const TICKS = 10;
 
-export function TopLeftStatus({ sample, currentTime }: Props) {
+export function TopLeftStatus({ sample, currentTime, trackProgress }: Props) {
   const progressStart = usePlayback(s => s.progressStart);
   const progressEnd = usePlayback(s => s.progressEnd);
   const absTime = usePlayback(s => s.currentTime);
@@ -49,7 +50,7 @@ export function TopLeftStatus({ sample, currentTime }: Props) {
   const hasRange =
     progressStart !== null && progressEnd !== null && progressEnd > progressStart;
 
-  let progress = sample?.progress ?? 0;
+  let progress = sample?.progress ?? trackProgress ?? 0;
   let elapsed = currentTime;
   if (hasRange) {
     const tStart = progressStart as number;

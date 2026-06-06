@@ -4,12 +4,50 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export default defineConfig({
+  build: {
+    rollupOptions: {
+      input: {
+        hud: path.resolve(__dirname, 'index.html'),
+        routeLab: path.resolve(__dirname, 'route-lab.html'),
+      },
+    },
+  },
   plugins: [
     react(),
     {
       name: 'hud5-gpx-enrichment-api',
       configureServer(server) {
         server.middlewares.use('/output', serveOutputFiles(server.config.root));
+        server.middlewares.use('/api/road-network', async (req, res) => {
+          try {
+            const url = new URL(req.url ?? '', 'http://localhost');
+            const lat = Number(url.searchParams.get('lat'));
+            const lon = Number(url.searchParams.get('lon'));
+            const radiusM = Number(url.searchParams.get('radiusM'));
+            if (![lat, lon, radiusM].every(Number.isFinite)) throw new Error('Invalid center or radius');
+            if (radiusM < 100 || radiusM > 5000) throw new Error('Radius must be between 100 and 5000 metres');
+            const latDelta = radiusM / 110540;
+            const lonDelta = radiusM / (111320 * Math.cos(lat * Math.PI / 180));
+            const minLat = lat - latDelta, minLon = lon - lonDelta;
+            const maxLat = lat + latDelta, maxLon = lon + lonDelta;
+            const sourceUrl = `https://www.openstreetmap.org/api/0.6/map?bbox=${minLon},${minLat},${maxLon},${maxLat}`;
+            const response = await fetch(sourceUrl, {
+              headers: {
+                Accept: 'application/xml,text/xml,*/*',
+                'User-Agent': 'HUD5RouteGenerator/0.1',
+              },
+            });
+            if (!response.ok) throw new Error(`OpenStreetMap ${response.status}`);
+            const roads = parseRoadNetworkXml(await response.text());
+            res.statusCode = 200;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ roads, sourceUrl }));
+          } catch (error) {
+            res.statusCode = 502;
+            res.setHeader('Content-Type', 'application/json');
+            res.end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
+          }
+        });
         server.middlewares.use('/api/enrich-gpx', async (req, res) => {
           if (req.method !== 'POST') {
             res.statusCode = 405;
@@ -125,4 +163,51 @@ function readJsonBody(req: import('node:http').IncomingMessage): Promise<Record<
     });
     req.on('error', reject);
   });
+}
+
+function parseRoadNetworkXml(xml: string) {
+  const nodes = new Map<string, { nodeId: string; lat: number; lon: number }>();
+  for (const match of xml.matchAll(/<node\b([^>]*)\/?>/g)) {
+    const attrs = xmlAttrs(match[1]);
+    const lat = Number(attrs.lat), lon = Number(attrs.lon);
+    if (attrs.id && Number.isFinite(lat) && Number.isFinite(lon)) {
+      nodes.set(attrs.id, { nodeId: attrs.id, lat, lon });
+    }
+  }
+  const roads = [];
+  for (const match of xml.matchAll(/<way\b([^>]*)>([\s\S]*?)<\/way>/g)) {
+    const attrs = xmlAttrs(match[1]);
+    const body = match[2];
+    const tags: Record<string, string> = {};
+    for (const tagMatch of body.matchAll(/<tag\b([^>]*)\/?>/g)) {
+      const tag = xmlAttrs(tagMatch[1]);
+      if (tag.k) tags[tag.k] = tag.v ?? '';
+    }
+    if (!tags.highway) continue;
+    const points = [...body.matchAll(/<nd\b([^>]*)\/?>/g)]
+      .map(nd => nodes.get(xmlAttrs(nd[1]).ref))
+      .filter((point): point is { nodeId: string; lat: number; lon: number } => !!point);
+    if (points.length > 1) {
+      roads.push({
+        id: attrs.id ?? `way:${roads.length}`,
+        name: tags.name ?? tags['name:zh'] ?? tags.ref ?? '未命名道路',
+        highway: tags.highway,
+        points,
+      });
+    }
+  }
+  return roads;
+}
+
+function xmlAttrs(text: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const match of text.matchAll(/([A-Za-z_:][\w:.-]*)="([^"]*)"/g)) {
+    attrs[match[1]] = match[2]
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&amp;/g, '&');
+  }
+  return attrs;
 }

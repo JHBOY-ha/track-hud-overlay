@@ -1,5 +1,15 @@
 # HUD5 Overlay
 
+## 开发启动
+
+```bash
+# HUD 编辑器：http://127.0.0.1:5173/
+npm run dev
+
+# HUD Route Lab：http://127.0.0.1:5174/route-lab.html
+npm run dev:route-lab
+```
+
 一个基于 React + Vite 的赛车 HUD 叠加层工具，用于把车辆遥测、路线轨迹和视频素材同步播放，并导出可用于剪辑软件的透明 HUD 视频。
 
 ![HUD5 Overlay preview](public/preview.png)

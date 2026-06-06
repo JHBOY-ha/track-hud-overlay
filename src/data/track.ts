@@ -17,6 +17,7 @@ export interface TrackParseOptions {
 interface RawPoint extends LonLat {
   t?: number;
   ele?: number;
+  progress?: number;
 }
 
 interface RawLayer {
@@ -49,6 +50,7 @@ function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
     const props = feature.properties ?? {};
     const gpxType: string | undefined = props._gpxType;
     const times: string[] | undefined = props.coordinateProperties?.times;
+    const progresses: number[] | undefined = props.coordinateProperties?.progresses;
     const kind = classifyKind(props, gpxType);
     const name = props.name as string | undefined;
     const shouldDenoise = denoiseGps || gpxType === 'trk' || gpxType === 'rte';
@@ -63,6 +65,9 @@ function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
           lat: c[1],
           tMs: Number.isFinite(ms) ? ms : undefined,
           ele: Number.isFinite(elev) ? elev : undefined,
+          progress: Number.isFinite(Number(progresses?.[base + i]))
+            ? Number(progresses?.[base + i])
+            : undefined,
         };
       });
 
@@ -101,7 +106,8 @@ function rawLayersFromGeoJson(geo: any, denoiseGps = false): RawLayer[] {
       points: l.points.map(p => ({
         lon: p.lon,
         lat: p.lat,
-        ele: p.ele,
+      ele: p.ele,
+      progress: p.progress,
         t: p.tMs !== undefined ? (p.tMs - anchorMs) / 1000 : undefined,
       })) as RawPoint[],
     }))
@@ -125,6 +131,7 @@ function buildLayer(
       distance: totalLength,
       t: raw.points[i].t,
       ele: raw.points[i].ele,
+      progress: raw.points[i].progress,
     };
   });
 
@@ -185,6 +192,24 @@ export function parseGpx(text: string, opts?: TrackParseOptions): Track {
 export function parseGeoJson(text: string, opts?: TrackParseOptions): Track {
   const geo = JSON.parse(text);
   return toTrack(rawLayersFromGeoJson(geo), opts);
+}
+
+export function progressAt(track: Track | null, time: number): number | null {
+  const points = track?.points ?? [];
+  if (!points.length || points[0].t === undefined || points[0].progress === undefined) return null;
+  if (time <= points[0].t!) return points[0].progress!;
+  const last = points[points.length - 1];
+  if (time >= (last.t ?? 0)) return last.progress ?? null;
+  let lo = 0, hi = points.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if ((points[mid].t ?? 0) <= time) lo = mid;
+    else hi = mid;
+  }
+  const a = points[lo], b = points[hi];
+  if (a.progress === undefined || b.progress === undefined) return null;
+  const f = (time - a.t!) / ((b.t! - a.t!) || 1);
+  return a.progress + (b.progress - a.progress) * f;
 }
 
 export interface TrackPose {
