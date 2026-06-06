@@ -20,6 +20,7 @@ enum HUDRouteLabMain {
         let delegate = AppDelegate()
         application.delegate = delegate
         application.setActivationPolicy(.regular)
+        ApplicationMenu.install(on: application)
         application.run()
     }
 
@@ -35,6 +36,54 @@ enum HUDRouteLabMain {
                 && ($0.bundleIdentifier == "com.local.HUDRouteLab" || $0.localizedName == "HUDRouteLab")
         }
         existing?.activate(options: [.activateAllWindows])
+    }
+}
+
+@MainActor
+enum ApplicationMenu {
+    static func install(on application: NSApplication) {
+        let mainMenu = NSMenu()
+        mainMenu.addItem(applicationMenu())
+        mainMenu.addItem(editMenu())
+        mainMenu.addItem(windowMenu(application: application))
+        application.mainMenu = mainMenu
+    }
+
+    private static func applicationMenu() -> NSMenuItem {
+        let item = NSMenuItem()
+        let menu = NSMenu(title: "HUD Route Lab")
+        menu.addItem(withTitle: "关于 HUD Route Lab", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        let quit = menu.addItem(withTitle: "退出 HUD Route Lab", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quit.keyEquivalentModifierMask = [.command]
+        item.submenu = menu
+        return item
+    }
+
+    private static func editMenu() -> NSMenuItem {
+        let item = NSMenuItem()
+        let menu = NSMenu(title: "编辑")
+        menu.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
+        menu.addItem(withTitle: "重做", action: Selector(("redo:")), keyEquivalent: "Z")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        menu.addItem(withTitle: "拷贝", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        menu.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        menu.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        item.submenu = menu
+        return item
+    }
+
+    private static func windowMenu(application: NSApplication) -> NSMenuItem {
+        let item = NSMenuItem()
+        let menu = NSMenu(title: "窗口")
+        menu.addItem(withTitle: "最小化", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        menu.addItem(withTitle: "缩放", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "前置全部窗口", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        application.windowsMenu = menu
+        item.submenu = menu
+        return item
     }
 }
 

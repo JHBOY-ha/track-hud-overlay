@@ -1,8 +1,21 @@
 import Foundation
+import AppKit
 import Testing
 @testable import HUDRouteLab
 
 struct RouteEngineTests {
+    @Test @MainActor func applicationMenuProvidesCommandQQuitAction() {
+        let application = NSApplication.shared
+        ApplicationMenu.install(on: application)
+        let quitItem = application.mainMenu?.items
+            .compactMap(\.submenu)
+            .flatMap(\.items)
+            .first { $0.action == #selector(NSApplication.terminate(_:)) }
+
+        #expect(quitItem?.keyEquivalent == "q")
+        #expect(quitItem?.keyEquivalentModifierMask.contains(.command) == true)
+    }
+
     @Test @MainActor func timelineWindowClampsAndRevealsCursor() {
         let model = RouteLabModel()
         model.cursorSeconds = 23 * 3600
