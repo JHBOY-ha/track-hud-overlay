@@ -19,6 +19,14 @@ struct TimelinePanel: View {
                 Text(model.cursorTime.formatted(date: .omitted, time: .standard))
                     .font(.body.monospacedDigit())
 
+                Button {
+                    model.togglePlayback()
+                } label: {
+                    Label(model.isPlaying ? "暂停" : "播放", systemImage: model.isPlaying ? "pause.fill" : "play.fill")
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut(.space, modifiers: [])
+
                 if model.importedTrack != nil {
                     Label("轨迹位置", systemImage: "location.fill")
                         .font(.caption)
@@ -155,7 +163,7 @@ struct TimelinePanel: View {
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
-                model.cursorSeconds = seconds(at: value.location.x, width: width)
+                model.scrubTimeline(to: seconds(at: value.location.x, width: width))
             })
         }
     }

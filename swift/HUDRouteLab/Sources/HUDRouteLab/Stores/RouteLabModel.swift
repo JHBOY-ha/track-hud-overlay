@@ -20,6 +20,7 @@ final class RouteLabModel {
     var marks: [RouteMark] = []
     var route: RouteResult = .empty
     var cursorSeconds = 8.0 * 60 * 60
+    var isPlaying = false
     var timelineHours = 24.0
     var timelineStartSeconds = 0.0
     var selectedMarkID: Int?
@@ -29,6 +30,7 @@ final class RouteLabModel {
     var status = "输入中心坐标和半径，然后获取周边路网。"
     private var nextID = 1
     private let service = OSMRoadService()
+    private var playbackTask: Task<Void, Never>?
 
     var center: GeoPoint { GeoPoint(lat: latitude, lon: longitude) }
     var importedCoordinates: [GeoPoint] { importedTrack?.coordinates ?? [] }
@@ -61,6 +63,7 @@ final class RouteLabModel {
         Calendar.current.startOfDay(for: .now).addingTimeInterval(cursorSeconds)
     }
     var timelineEndSeconds: Double { min(86_399, timelineStartSeconds + timelineHours * 3600) }
+    var playbackRange: ClosedRange<Double> { importedTimelineRange ?? 0 ... 86_399 }
     var routeIssueText: String? {
         if hasDuplicateTimes { return "时间标记必须严格递增且不能重复。" }
         if let pair = route.disconnectedPair { return "T\(pair + 1) 与 T\(pair + 2) 不在同一连通路网中。" }
@@ -97,6 +100,7 @@ final class RouteLabModel {
     }
 
     func importTrack() {
+        pausePlayback()
         let panel = NSOpenPanel()
         panel.title = "导入 GPX 或 GeoJSON 轨迹"
         panel.prompt = "导入"
@@ -124,6 +128,7 @@ final class RouteLabModel {
     }
 
     func clearImportedTrack() {
+        pausePlayback()
         importedTrack = nil
         snapPreview = .empty
         status = "已移除导入轨迹。"
@@ -235,6 +240,53 @@ final class RouteLabModel {
         timelineHours = hours
         timelineStartSeconds = min(timelineStartSeconds, max(0, 86_400 - hours * 3600))
         revealCursor()
+    }
+
+    func togglePlayback() {
+        isPlaying ? pausePlayback() : play()
+    }
+
+    func play() {
+        guard !isPlaying else { return }
+        let range = playbackRange
+        if cursorSeconds < range.lowerBound || cursorSeconds >= range.upperBound {
+            cursorSeconds = range.lowerBound
+            revealCursor()
+        }
+        isPlaying = true
+        playbackTask?.cancel()
+        playbackTask = Task { [weak self] in
+            var previous = Date.now
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(16))
+                guard !Task.isCancelled, let self else { return }
+                let now = Date.now
+                let elapsed = now.timeIntervalSince(previous)
+                previous = now
+                self.advancePlayback(by: elapsed)
+            }
+        }
+    }
+
+    func pausePlayback() {
+        isPlaying = false
+        playbackTask?.cancel()
+        playbackTask = nil
+    }
+
+    func scrubTimeline(to seconds: Double) {
+        pausePlayback()
+        cursorSeconds = min(86_399, max(0, seconds))
+    }
+
+    func advancePlayback(by seconds: Double) {
+        guard isPlaying else { return }
+        let end = playbackRange.upperBound
+        cursorSeconds = min(end, cursorSeconds + max(0, seconds))
+        revealCursor()
+        if cursorSeconds >= end {
+            pausePlayback()
+        }
     }
 
     func revealCursor() {

@@ -15,6 +15,33 @@ struct RouteEngineTests {
         #expect(model.timelineStartSeconds == 0)
     }
 
+    @Test @MainActor func playbackUsesImportedTrackRangeAndStopsAtEnd() {
+        let model = RouteLabModel()
+        let start = Calendar.current.startOfDay(for: .now).addingTimeInterval(100)
+        model.importedTrack = ImportedTrack(name: "timed", points: [
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 0), time: start),
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 1), time: start.addingTimeInterval(10)),
+        ])
+        model.cursorSeconds = 50
+
+        model.play()
+        #expect(model.cursorSeconds == 100)
+        #expect(model.isPlaying)
+
+        model.advancePlayback(by: 12)
+        #expect(model.cursorSeconds == 110)
+        #expect(!model.isPlaying)
+    }
+
+    @Test @MainActor func timelineScrubbingPausesPlayback() {
+        let model = RouteLabModel()
+        model.play()
+        model.scrubTimeline(to: 200)
+
+        #expect(model.cursorSeconds == 200)
+        #expect(!model.isPlaying)
+    }
+
     @Test func parsesSharedOSMNodesForRouting() throws {
         let xml = """
         <osm version="0.6">
