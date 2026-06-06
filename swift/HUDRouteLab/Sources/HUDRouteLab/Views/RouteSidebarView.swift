@@ -5,6 +5,29 @@ struct RouteSidebarView: View {
 
     var body: some View {
         List {
+            Section("视频预览") {
+                if let video = model.importedVideo {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(video.name).lineLimit(1)
+                            Text(video.embeddedTimecode == nil ? "无内置 timecode" : "已读取内置 tmcd timecode")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "film").foregroundStyle(.purple)
+                    }
+                    Toggle("显示视频预览", isOn: $model.showsVideoPreview)
+                    Button("移除视频", role: .destructive) { model.clearImportedVideo() }
+                } else {
+                    Button {
+                        model.importVideo()
+                    } label: {
+                        Label("导入 MOV / MP4", systemImage: "film")
+                    }
+                }
+            }
+
             Section("导入轨迹") {
                 if let track = model.importedTrack {
                     Label {

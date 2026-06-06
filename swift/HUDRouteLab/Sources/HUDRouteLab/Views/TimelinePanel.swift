@@ -60,7 +60,7 @@ struct TimelinePanel: View {
                 Divider()
 
                 timelineTrack
-                    .frame(height: 64)
+                    .frame(height: 78)
                     .padding(.horizontal, 12)
                     .padding(.top, 8)
 
@@ -134,6 +134,23 @@ struct TimelinePanel: View {
                             .frame(width: 9, height: 9)
                             .offset(x: cursorX - 4.5, y: 47)
                     }
+                }
+
+                if let range = model.videoTimelineRange,
+                   range.upperBound >= model.timelineStartSeconds,
+                   range.lowerBound <= model.timelineStartSeconds + spanSeconds {
+                    let startX = xPosition(range.lowerBound, width: width)
+                    let endX = xPosition(range.upperBound, width: width)
+                    Capsule()
+                        .fill(Color.purple.opacity(0.78))
+                        .frame(width: max(3, endX - startX), height: 8)
+                        .overlay(alignment: .leading) {
+                            Text("VIDEO")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.leading, 5)
+                        }
+                        .offset(x: startX, y: 61)
                 }
 
                 ForEach(Array(ordered.enumerated()), id: \.element.id) { index, mark in

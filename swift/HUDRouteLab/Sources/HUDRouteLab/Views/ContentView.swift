@@ -44,6 +44,12 @@ struct ContentView: View {
                 .keyboardShortcut("o", modifiers: [.command])
 
                 Button {
+                    model.importVideo()
+                } label: {
+                    Label("导入视频", systemImage: "film")
+                }
+
+                Button {
                     model.completeRoadNetwork()
                 } label: {
                     Label("补全路网", systemImage: "point.3.connected.trianglepath.dotted")
@@ -125,9 +131,37 @@ struct ContentView: View {
             }
 
             if model.isLoading {
-                ProgressView("正在获取 OpenStreetMap 路网...")
+                ProgressView(model.statusText)
                     .padding(18)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            }
+
+            if model.importedVideo != nil, model.showsVideoPreview {
+                VStack(spacing: 0) {
+                    HStack {
+                        Label(model.importedVideo?.name ?? "视频", systemImage: "film")
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            model.showsVideoPreview = false
+                        } label: {
+                            Image(systemName: "xmark")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .font(.caption)
+                    .padding(8)
+                    .background(.regularMaterial)
+
+                    VideoPreviewView(player: model.videoPlayer)
+                        .aspectRatio(16 / 9, contentMode: .fit)
+                }
+                .frame(width: 360)
+                .background(.black, in: RoundedRectangle(cornerRadius: 10))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .shadow(radius: 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(16)
             }
         }
         .navigationTitle("路线编辑器")
