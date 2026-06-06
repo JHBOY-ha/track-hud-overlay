@@ -5,6 +5,37 @@ struct RouteInspectorView: View {
 
     var body: some View {
         Form {
+            if model.importedTrack != nil {
+                Section("吸附预览") {
+                    Toggle("显示原始轨迹", isOn: $model.showsOriginalTrack)
+                    Toggle("显示吸附轨迹", isOn: $model.showsSnapPreview)
+
+                    LabeledContent("吸附距离") {
+                        Text("\(model.snapDistanceM.formatted(.number.precision(.fractionLength(0)))) m")
+                            .monospacedDigit()
+                    }
+                    Slider(value: $model.snapDistanceM, in: 5 ... 100, step: 5)
+
+                    LabeledContent("已吸附", value: "\(model.snapPreview.snappedCount) / \(model.importedCoordinates.count)")
+                    LabeledContent(
+                        "平均偏移",
+                        value: "\(model.snapPreview.averageOffsetM.formatted(.number.precision(.fractionLength(1)))) m"
+                    )
+                    LabeledContent(
+                        "最大偏移",
+                        value: "\(model.snapPreview.maxOffsetM.formatted(.number.precision(.fractionLength(1)))) m"
+                    )
+
+                    HStack(spacing: 16) {
+                        Label("原始轨迹", systemImage: "line.diagonal")
+                            .foregroundStyle(.blue)
+                        Label("吸附轨迹", systemImage: "line.diagonal")
+                            .foregroundStyle(.green)
+                    }
+                    .font(.caption)
+                }
+            }
+
             Section("路线") {
                 LabeledContent("状态") {
                     Label(
@@ -59,4 +90,3 @@ struct RouteInspectorView: View {
         .padding(.top, 8)
     }
 }
-

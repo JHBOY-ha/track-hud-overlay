@@ -5,6 +5,44 @@ struct RouteSidebarView: View {
 
     var body: some View {
         List {
+            Section("导入轨迹") {
+                if let track = model.importedTrack {
+                    Label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(track.name)
+                                .lineLimit(1)
+                            Text("\(track.points.count) 个轨迹点")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } icon: {
+                        Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                            .foregroundStyle(.blue)
+                    }
+
+                    Button {
+                        model.completeRoadNetwork()
+                    } label: {
+                        Label(model.isLoading ? "正在补全..." : "补全轨迹周边路网", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                    .disabled(model.isLoading)
+
+                    Button("移除导入轨迹", role: .destructive) {
+                        model.clearImportedTrack()
+                    }
+                } else {
+                    Text("导入 GPX 或 GeoJSON 后，可补全周边路网并对比吸附效果。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Button {
+                        model.importTrack()
+                    } label: {
+                        Label("导入 GPX / GeoJSON", systemImage: "square.and.arrow.down")
+                    }
+                }
+            }
+
             Section("路网范围") {
                 LabeledContent("纬度") {
                     TextField("纬度", value: $model.latitude, format: .number.precision(.fractionLength(6)))
@@ -45,6 +83,9 @@ struct RouteSidebarView: View {
 
                 LabeledContent("道路", value: "\(model.roads.count)")
                 LabeledContent("时间标记", value: "\(model.marks.count)")
+                if model.importedTrack != nil {
+                    LabeledContent("已吸附轨迹点", value: "\(model.snapPreview.snappedCount) / \(model.importedCoordinates.count)")
+                }
             }
 
             Section("时间标记") {
@@ -89,4 +130,3 @@ struct RouteSidebarView: View {
         }
     }
 }
-

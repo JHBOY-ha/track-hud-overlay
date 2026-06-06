@@ -37,6 +37,20 @@ struct ContentView: View {
 
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
+                    model.importTrack()
+                } label: {
+                    Label("导入轨迹", systemImage: "square.and.arrow.down")
+                }
+                .keyboardShortcut("o", modifiers: [.command])
+
+                Button {
+                    model.completeRoadNetwork()
+                } label: {
+                    Label("补全路网", systemImage: "point.3.connected.trianglepath.dotted")
+                }
+                .disabled(model.importedTrack == nil || model.isLoading)
+
+                Button {
                     model.fetchRoads()
                 } label: {
                     Label(model.isLoading ? "正在获取路网" : "获取路网", systemImage: "arrow.triangle.2.circlepath")
@@ -78,6 +92,8 @@ struct ContentView: View {
             RoadMapView(
                 roads: model.roads,
                 route: model.route.path,
+                importedTrack: model.showsOriginalTrack ? model.importedCoordinates : [],
+                snapPreview: model.showsSnapPreview ? model.snapPreview.points : [],
                 marks: model.marks,
                 center: model.center,
                 radiusM: model.radiusM,
@@ -88,14 +104,17 @@ struct ContentView: View {
                 onClick: model.clickMap
             )
 
-            if model.roads.isEmpty && !model.isLoading {
+            if model.roads.isEmpty && model.importedTrack == nil && !model.isLoading {
                 ContentUnavailableView {
                     Label("尚未载入路网", systemImage: "map")
                 } description: {
-                    Text("在侧边栏输入中心坐标和半径，然后从 OpenStreetMap 获取道路。")
+                    Text("导入 GPX / GeoJSON 轨迹，或输入中心坐标后获取 OpenStreetMap 道路。")
                 } actions: {
-                    Button("获取路网") { model.fetchRoads() }
-                        .buttonStyle(.borderedProminent)
+                    HStack {
+                        Button("导入轨迹") { model.importTrack() }
+                            .buttonStyle(.borderedProminent)
+                        Button("获取路网") { model.fetchRoads() }
+                    }
                 }
                 .frame(maxWidth: 430)
                 .padding(28)

@@ -12,7 +12,7 @@ suites.
 | `HUD5Core` | library + tests | Pure logic ported 1:1 from `src/util` + `src/data`: projection, heading, units, timecode, coordinate systems, telemetry (CSV/JSON), GPS denoise, road snapping, track ingestion (GPX/GeoJSON), pose sampling. No UI, no platform deps. |
 | `HUD5Export` | library + executable | `HUD5Render` (CoreGraphics HUD renderer) + `hud5-export` CLI (AVFoundation ProRes 4444 **alpha** writer). Replaces Puppeteer + FFmpeg. |
 | `HUD5App` | executable | SwiftUI preview app. Reuses `HUD5Core` + `HUD5Render`; playback + file loading. **UI work continues in Xcode.** |
-| `HUDRouteLab` | executable | Native SwiftUI/AppKit road network route and timeline editor. Exports HUD-compatible GeoJSON. |
+| `HUDRouteLab` | executable | Native SwiftUI/AppKit road network route and timeline editor. Imports GPX/GeoJSON, completes OSM roads, previews road snapping, and exports HUD-compatible GeoJSON. |
 
 ## Build & test (command line)
 

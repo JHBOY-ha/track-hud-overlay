@@ -4,6 +4,8 @@ import SwiftUI
 struct RoadMapView: NSViewRepresentable {
     var roads: [Road]
     var route: [GeoPoint]
+    var importedTrack: [GeoPoint]
+    var snapPreview: [GeoPoint]
     var marks: [RouteMark]
     var center: GeoPoint
     var radiusM: Double
@@ -22,6 +24,8 @@ struct RoadMapView: NSViewRepresentable {
     func updateNSView(_ view: RoadMapNSView, context: Context) {
         view.roads = roads
         view.route = route
+        view.importedTrack = importedTrack
+        view.snapPreview = snapPreview
         view.marks = marks
         view.centerPoint = center
         view.radiusM = radiusM
@@ -43,6 +47,8 @@ struct RoadMapView: NSViewRepresentable {
 final class RoadMapNSView: NSView {
     var roads: [Road] = []
     var route: [GeoPoint] = []
+    var importedTrack: [GeoPoint] = []
+    var snapPreview: [GeoPoint] = []
     var marks: [RouteMark] = []
     var centerPoint = GeoPoint(lat: 0, lon: 0)
     var radiusM = 1000.0
@@ -68,6 +74,8 @@ final class RoadMapNSView: NSView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         drawGrid()
         for road in roads { drawPolyline(road.points.map(\.geo), color: roadColor(road.highway), width: roadWidth(road.highway)) }
+        drawPolyline(importedTrack, color: NSColor.systemBlue.withAlphaComponent(0.8), width: 3, dashPattern: [7, 5])
+        drawPolyline(snapPreview, color: NSColor.systemGreen.withAlphaComponent(0.9), width: 4)
         drawPolyline(route, color: NSColor.controlAccentColor, width: 4)
         for (index, mark) in marks.sorted(by: { $0.time < $1.time }).enumerated() {
             drawMark(
@@ -163,12 +171,15 @@ final class RoadMapNSView: NSView {
         )
     }
 
-    private func drawPolyline(_ points: [GeoPoint], color: NSColor, width: CGFloat) {
+    private func drawPolyline(_ points: [GeoPoint], color: NSColor, width: CGFloat, dashPattern: [CGFloat] = []) {
         guard points.count > 1 else { return }
         let path = NSBezierPath()
         path.lineCapStyle = .round
         path.lineJoinStyle = .round
         path.lineWidth = width
+        if !dashPattern.isEmpty {
+            path.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
+        }
         path.move(to: mapToScreen(project(points[0])))
         for point in points.dropFirst() { path.line(to: mapToScreen(project(point))) }
         color.setStroke()
