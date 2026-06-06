@@ -1,109 +1,113 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var model = RouteLabModel()
+    @Bindable var model: RouteLabModel
+    @State private var showsInspector = true
 
     var body: some View {
-        VStack(spacing: 0) {
-            controls
-            Divider()
-            HStack(spacing: 0) {
-                RoadMapView(
-                    roads: model.roads,
-                    route: model.route.path,
-                    marks: model.marks,
-                    center: model.center,
-                    radiusM: model.radiusM,
-                    selectedMarkID: model.selectedMarkID,
-                    onClick: model.clickMap
-                )
-
-                Divider()
-
-                MarkInspectorView(model: model)
-                    .frame(width: 310)
-            }
-            Divider()
-            timeline
+        NavigationSplitView {
+            RouteSidebarView(model: model)
+                .navigationSplitViewColumnWidth(min: 250, ideal: 285, max: 340)
+        } detail: {
+            mapEditor
+                .inspector(isPresented: $showsInspector) {
+                    RouteInspectorView(model: model)
+                        .inspectorColumnWidth(min: 250, ideal: 285, max: 340)
+                }
         }
-        .frame(width: 1200, height: 760)
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            TimelinePanel(model: model)
+        }
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button {
+                    model.undoMark()
+                } label: {
+                    Label("撤销标记", systemImage: "arrow.uturn.backward")
+                }
+                .disabled(model.marks.isEmpty)
+
+                Button {
+                    model.clearMarks()
+                } label: {
+                    Label("清空标记", systemImage: "trash")
+                }
+                .disabled(model.marks.isEmpty)
+            }
+
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    model.fetchRoads()
+                } label: {
+                    Label(model.isLoading ? "正在获取路网" : "获取路网", systemImage: "arrow.triangle.2.circlepath")
+                }
+                .disabled(model.isLoading)
+                .keyboardShortcut(.return, modifiers: [.command])
+
+                Menu {
+                    Button("放大") { model.sendMapCommand(.zoom(1.4)) }
+                    Button("缩小") { model.sendMapCommand(.zoom(0.72)) }
+                    Divider()
+                    Button("复位地图") { model.resetMap() }
+                } label: {
+                    Label("地图显示", systemImage: "map")
+                }
+
+                Button {
+                    model.export()
+                } label: {
+                    Label("导出 GeoJSON", systemImage: "square.and.arrow.up")
+                }
+                .disabled(!model.canExport)
+                .keyboardShortcut("e", modifiers: [.command])
+
+                Button {
+                    showsInspector.toggle()
+                } label: {
+                    Label("路线检查器", systemImage: "sidebar.right")
+                }
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .exportRoute)) { _ in
             model.export()
         }
     }
 
-    private var controls: some View {
-        HStack(spacing: 12) {
-            coordinateField("经度", value: $model.longitude)
-            coordinateField("纬度", value: $model.latitude)
+    private var mapEditor: some View {
+        ZStack {
+            RoadMapView(
+                roads: model.roads,
+                route: model.route.path,
+                marks: model.marks,
+                center: model.center,
+                radiusM: model.radiusM,
+                selectedMarkID: model.selectedMarkID,
+                disconnectedMarkIDs: model.disconnectedMarkIDs,
+                command: model.mapCommand,
+                commandRevision: model.mapCommandRevision,
+                onClick: model.clickMap
+            )
 
-            HStack(spacing: 6) {
-                Text("半径")
-                TextField("1000", value: $model.radiusM, format: .number)
-                    .frame(width: 72)
-                Text("m")
-                    .foregroundStyle(.secondary)
+            if model.roads.isEmpty && !model.isLoading {
+                ContentUnavailableView {
+                    Label("尚未载入路网", systemImage: "map")
+                } description: {
+                    Text("在侧边栏输入中心坐标和半径，然后从 OpenStreetMap 获取道路。")
+                } actions: {
+                    Button("获取路网") { model.fetchRoads() }
+                        .buttonStyle(.borderedProminent)
+                }
+                .frame(maxWidth: 430)
+                .padding(28)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
             }
-
-            Button("获取路网") {
-                model.fetchRoads()
-            }
-            .keyboardShortcut(.return, modifiers: [.command])
-            .disabled(model.isLoading)
 
             if model.isLoading {
-                ProgressView()
-                    .controlSize(.small)
+                ProgressView("正在获取 OpenStreetMap 路网...")
+                    .padding(18)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
             }
-
-            Spacer()
-
-            Text(model.statusText)
-                .foregroundStyle(model.statusIsError ? .red : .secondary)
-                .lineLimit(1)
-
-            Button("导出 GeoJSON") {
-                model.export()
-            }
-            .keyboardShortcut("e", modifiers: [.command])
-            .disabled(!model.canExport)
         }
-        .padding(12)
-    }
-
-    private func coordinateField(_ title: String, value: Binding<Double>) -> some View {
-        HStack(spacing: 6) {
-            Text(title)
-            TextField(title, value: value, format: .number.precision(.fractionLength(6)))
-                .frame(width: 112)
-        }
-    }
-
-    private var timeline: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("当前时间")
-                    .font(.headline)
-                Text(model.cursorTime.formatted(date: .omitted, time: .standard))
-                    .monospacedDigit()
-                Spacer()
-                Text("设置时间后点击道路添加标记")
-                    .foregroundStyle(.secondary)
-            }
-
-            Slider(value: $model.cursorSeconds, in: 0 ... 86_399)
-
-            HStack {
-                Text("00:00:00")
-                Spacer()
-                Text("12:00:00")
-                Spacer()
-                Text("23:59:59")
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-        .padding(12)
-        .background(.bar)
+        .navigationTitle("路线编辑器")
     }
 }

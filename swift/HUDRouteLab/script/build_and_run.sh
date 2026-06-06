@@ -46,4 +46,4 @@ if [[ "${1:-}" == "--verify" ]]; then
   exit 0
 fi
 
-open -n "$APP_DIR"
+open "$APP_DIR"
