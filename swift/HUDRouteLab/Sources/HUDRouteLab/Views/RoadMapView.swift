@@ -97,7 +97,6 @@ final class RoadMapNSView: NSView {
         NSColor.controlBackgroundColor.setFill()
         dirtyRect.fill()
         guard bounds.width > 0, bounds.height > 0 else { return }
-        drawGrid()
         rebuildCachedPathsIfNeeded()
         stroke(cachedMinorRoads, color: NSColor.secondaryLabelColor.withAlphaComponent(0.48), width: 2)
         stroke(cachedMajorRoads, color: NSColor.labelColor.withAlphaComponent(0.58), width: 4)
@@ -248,18 +247,6 @@ final class RoadMapNSView: NSView {
         path.lineWidth = width
         path.setLineDash(dashPattern, count: dashPattern.count, phase: 0)
         color.setStroke()
-        path.stroke()
-    }
-
-    private func drawGrid() {
-        let path = NSBezierPath()
-        path.lineWidth = 1
-        let step = 52.0 * scale
-        var x = offset.x.truncatingRemainder(dividingBy: step)
-        while x < bounds.width { path.move(to: CGPoint(x: x, y: 0)); path.line(to: CGPoint(x: x, y: bounds.height)); x += step }
-        var y = offset.y.truncatingRemainder(dividingBy: step)
-        while y < bounds.height { path.move(to: CGPoint(x: 0, y: y)); path.line(to: CGPoint(x: bounds.width, y: y)); y += step }
-        NSColor.separatorColor.withAlphaComponent(0.28).setStroke()
         path.stroke()
     }
 
