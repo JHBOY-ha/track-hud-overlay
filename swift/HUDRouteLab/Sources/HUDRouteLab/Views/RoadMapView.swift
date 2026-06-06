@@ -6,6 +6,8 @@ struct RoadMapView: NSViewRepresentable {
     var route: [GeoPoint]
     var importedTrack: [GeoPoint]
     var snapPreview: [GeoPoint]
+    var importedCursorPoint: GeoPoint?
+    var snappedCursorPoint: GeoPoint?
     var marks: [RouteMark]
     var center: GeoPoint
     var radiusM: Double
@@ -26,6 +28,8 @@ struct RoadMapView: NSViewRepresentable {
         view.route = route
         view.importedTrack = importedTrack
         view.snapPreview = snapPreview
+        view.importedCursorPoint = importedCursorPoint
+        view.snappedCursorPoint = snappedCursorPoint
         view.marks = marks
         view.centerPoint = center
         view.radiusM = radiusM
@@ -49,6 +53,8 @@ final class RoadMapNSView: NSView {
     var route: [GeoPoint] = []
     var importedTrack: [GeoPoint] = []
     var snapPreview: [GeoPoint] = []
+    var importedCursorPoint: GeoPoint?
+    var snappedCursorPoint: GeoPoint?
     var marks: [RouteMark] = []
     var centerPoint = GeoPoint(lat: 0, lon: 0)
     var radiusM = 1000.0
@@ -77,6 +83,12 @@ final class RoadMapNSView: NSView {
         drawPolyline(importedTrack, color: NSColor.systemBlue.withAlphaComponent(0.8), width: 3, dashPattern: [7, 5])
         drawPolyline(snapPreview, color: NSColor.systemGreen.withAlphaComponent(0.9), width: 4)
         drawPolyline(route, color: NSColor.controlAccentColor, width: 4)
+        if let importedCursorPoint {
+            drawCursorPoint(importedCursorPoint, color: .systemBlue, filled: false)
+        }
+        if let snappedCursorPoint {
+            drawCursorPoint(snappedCursorPoint, color: .systemGreen, filled: true)
+        }
         for (index, mark) in marks.sorted(by: { $0.time < $1.time }).enumerated() {
             drawMark(
                 mark,
@@ -206,6 +218,20 @@ final class RoadMapNSView: NSView {
         NSBezierPath(ovalIn: rect).fill()
         let attrs: [NSAttributedString.Key: Any] = [.foregroundColor: color, .font: NSFont.monospacedSystemFont(ofSize: 10, weight: .semibold)]
         label.draw(at: CGPoint(x: point.x + 10, y: point.y - 7), withAttributes: attrs)
+    }
+
+    private func drawCursorPoint(_ geoPoint: GeoPoint, color: NSColor, filled: Bool) {
+        let point = mapToScreen(project(geoPoint))
+        let outerRect = CGRect(x: point.x - 8, y: point.y - 8, width: 16, height: 16)
+        let innerRect = CGRect(x: point.x - 3, y: point.y - 3, width: 6, height: 6)
+        let outer = NSBezierPath(ovalIn: outerRect)
+        outer.lineWidth = 3
+        color.setStroke()
+        outer.stroke()
+        if filled {
+            color.setFill()
+            NSBezierPath(ovalIn: innerRect).fill()
+        }
     }
 
     private func drawCenter() {

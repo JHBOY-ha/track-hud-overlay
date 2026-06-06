@@ -107,6 +107,29 @@ struct RouteEngineTests {
         #expect(track.points[0].point == GeoPoint(lat: 39.9, lon: 116.4))
     }
 
+    @Test func importedTrackUsesTimestampDurationAndInterpolatesCursorPosition() {
+        let start = Date(timeIntervalSince1970: 8 * 3600)
+        let track = ImportedTrack(name: "timed", points: [
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 0), time: start),
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 0.01), time: start.addingTimeInterval(10)),
+        ])
+
+        #expect(track.timelineSeconds.count == 2)
+        #expect(track.timelineSeconds[1] - track.timelineSeconds[0] == 10)
+        let middle = track.point(at: track.timelineSeconds[0] + 5)
+        #expect(abs((middle?.lon ?? 0) - 0.005) < 0.000001)
+    }
+
+    @Test func importedTrackWithoutTimesFillsTimeline() {
+        let track = ImportedTrack(name: "untimed", points: [
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 0), time: nil),
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 1), time: nil),
+            ImportedTrackPoint(point: GeoPoint(lat: 0, lon: 2), time: nil),
+        ])
+
+        #expect(track.timelineSeconds == [0, 43_199.5, 86_399])
+    }
+
     @Test func samplesConnectedRouteAtTenHertz() throws {
         let road = Road(
             id: "1",

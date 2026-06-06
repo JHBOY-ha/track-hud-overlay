@@ -32,6 +32,16 @@ final class RouteLabModel {
 
     var center: GeoPoint { GeoPoint(lat: latitude, lon: longitude) }
     var importedCoordinates: [GeoPoint] { importedTrack?.coordinates ?? [] }
+    var importedTimelineRange: ClosedRange<Double>? { importedTrack?.timelineRange }
+    var importedCursorPoint: GeoPoint? {
+        guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
+        return importedTrack?.point(at: cursorSeconds)
+    }
+    var snappedCursorPoint: GeoPoint? {
+        guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
+        guard snapPreview.points.count == importedTrack?.points.count else { return nil }
+        return importedTrack?.point(at: cursorSeconds, coordinates: snapPreview.points)
+    }
     var orderedMarks: [RouteMark] { marks.sorted { $0.time < $1.time } }
     var hasDuplicateTimes: Bool {
         zip(orderedMarks, orderedMarks.dropFirst()).contains { $0.time >= $1.time }
@@ -101,6 +111,10 @@ final class RouteLabModel {
             latitude = bounds.center.lat
             longitude = bounds.center.lon
             radiusM = max(250, bounds.radiusM)
+            if let range = track.timelineRange {
+                cursorSeconds = range.lowerBound
+                revealCursor()
+            }
             status = "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
             resetMap()
             rebuildSnapPreview()

@@ -15,6 +15,47 @@ struct ImportedTrack: Equatable, Sendable {
     var points: [ImportedTrackPoint]
 
     var coordinates: [GeoPoint] { points.map(\.point) }
+
+    var timelineSeconds: [Double] {
+        guard points.count > 1 else { return points.isEmpty ? [] : [0] }
+        let dates = points.compactMap(\.time)
+        guard dates.count == points.count,
+              zip(dates, dates.dropFirst()).allSatisfy({ $0 <= $1 }) else {
+            return evenlyDistributedTimeline
+        }
+        let duration = dates.last!.timeIntervalSince(dates.first!)
+        guard duration > 0, duration <= 86_399 else { return evenlyDistributedTimeline }
+        let firstSeconds = dates.first!.timeIntervalSince(Calendar.current.startOfDay(for: dates.first!))
+        let start = min(firstSeconds, 86_399 - duration)
+        return dates.map { start + $0.timeIntervalSince(dates.first!) }
+    }
+
+    var timelineRange: ClosedRange<Double>? {
+        guard let first = timelineSeconds.first, let last = timelineSeconds.last else { return nil }
+        return first ... last
+    }
+
+    func point(at seconds: Double, coordinates: [GeoPoint]? = nil) -> GeoPoint? {
+        let source = coordinates ?? self.coordinates
+        let times = timelineSeconds
+        guard source.count == times.count, let first = source.first else { return nil }
+        if seconds <= times[0] { return first }
+        if seconds >= times[times.count - 1] { return source.last }
+        for index in 1..<times.count where seconds <= times[index] {
+            let duration = times[index] - times[index - 1]
+            let fraction = duration > 0 ? (seconds - times[index - 1]) / duration : 0
+            return GeoPoint(
+                lat: source[index - 1].lat + (source[index].lat - source[index - 1].lat) * fraction,
+                lon: source[index - 1].lon + (source[index].lon - source[index - 1].lon) * fraction
+            )
+        }
+        return source.last
+    }
+
+    private var evenlyDistributedTimeline: [Double] {
+        let denominator = Double(max(1, points.count - 1))
+        return points.indices.map { Double($0) / denominator * 86_399 }
+    }
 }
 
 struct SnapPreview: Equatable, Sendable {

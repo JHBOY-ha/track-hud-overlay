@@ -19,6 +19,12 @@ struct TimelinePanel: View {
                 Text(model.cursorTime.formatted(date: .omitted, time: .standard))
                     .font(.body.monospacedDigit())
 
+                if model.importedTrack != nil {
+                    Label("轨迹位置", systemImage: "location.fill")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
+
                 Spacer()
 
                 Picker("时间轴缩放", selection: Binding(
@@ -104,6 +110,23 @@ struct TimelinePanel: View {
                     .fill(Color.accentColor)
                     .frame(width: 2, height: 50)
                     .offset(x: cursorX, y: 12)
+
+                if let range = model.importedTimelineRange,
+                   range.upperBound >= model.timelineStartSeconds,
+                   range.lowerBound <= model.timelineStartSeconds + spanSeconds {
+                    let startX = xPosition(range.lowerBound, width: width)
+                    let endX = xPosition(range.upperBound, width: width)
+                    Capsule()
+                        .fill(Color.blue.opacity(0.72))
+                        .frame(width: max(3, endX - startX), height: 7)
+                        .offset(x: startX, y: 48)
+                    if range.contains(model.cursorSeconds) {
+                        Circle()
+                            .fill(Color.blue)
+                            .frame(width: 9, height: 9)
+                            .offset(x: cursorX - 4.5, y: 47)
+                    }
+                }
 
                 ForEach(Array(ordered.enumerated()), id: \.element.id) { index, mark in
                     if isVisible(model.secondsForMark(mark.id)) {

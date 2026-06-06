@@ -94,6 +94,8 @@ struct ContentView: View {
                 route: model.route.path,
                 importedTrack: model.showsOriginalTrack ? model.importedCoordinates : [],
                 snapPreview: model.showsSnapPreview ? model.snapPreview.points : [],
+                importedCursorPoint: model.showsOriginalTrack ? model.importedCursorPoint : nil,
+                snappedCursorPoint: model.showsSnapPreview ? model.snappedCursorPoint : nil,
                 marks: model.marks,
                 center: model.center,
                 radiusM: model.radiusM,
