@@ -1,0 +1,11 @@
+[environment]
+name = "HUD Route Lab"
+
+[[actions]]
+name = "Build and Run"
+command = "./script/build_and_run.sh"
+
+[[actions]]
+name = "Test"
+command = "swift test"
+
