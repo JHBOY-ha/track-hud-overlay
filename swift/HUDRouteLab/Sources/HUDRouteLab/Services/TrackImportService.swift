@@ -15,10 +15,13 @@ enum TrackImportError: LocalizedError {
 }
 
 enum TrackImportService {
-    static func parse(data: Data, fileName: String) throws -> ImportedTrack {
+    static func parse(data: Data, fileName: String) throws -> ImportedRouteDocument {
         switch URL(fileURLWithPath: fileName).pathExtension.lowercased() {
         case "gpx":
-            return try GPXTrackParser.parse(data, name: fileName)
+            return ImportedRouteDocument(
+                track: try GPXTrackParser.parse(data, name: fileName),
+                referenceRoads: []
+            )
         case "geojson", "json":
             return try parseGeoJSON(data, name: fileName)
         default:
@@ -26,7 +29,7 @@ enum TrackImportService {
         }
     }
 
-    static func parseGeoJSON(_ data: Data, name: String) throws -> ImportedTrack {
+    static func parseGeoJSON(_ data: Data, name: String) throws -> ImportedRouteDocument {
         guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw TrackImportError.invalidGeoJSON
         }
@@ -38,10 +41,12 @@ enum TrackImportService {
         } else {
             features = [["type": "Feature", "geometry": root]]
         }
+        var track: ImportedTrack?
         let preferred = features.sorted { featurePriority($0) < featurePriority($1) }
         for feature in preferred {
+            guard featureKind(feature) != "reference" else { continue }
             guard let geometry = feature["geometry"] as? [String: Any],
-                  let coordinates = lineCoordinates(geometry),
+                  let coordinates = lineStrings(geometry).max(by: { $0.count < $1.count }),
                   coordinates.count > 1 else { continue }
             let properties = feature["properties"] as? [String: Any]
             let coordinateProperties = properties?["coordinateProperties"] as? [String: Any]
@@ -54,29 +59,72 @@ enum TrackImportService {
                 )
             }
             if points.count > 1 {
-                return ImportedTrack(name: properties?["name"] as? String ?? name, points: points)
+                track = ImportedTrack(name: properties?["name"] as? String ?? name, points: points)
+                break
             }
         }
-        throw TrackImportError.invalidGeoJSON
+        guard let track else { throw TrackImportError.invalidGeoJSON }
+        return ImportedRouteDocument(track: track, referenceRoads: referenceRoads(from: features))
     }
 
     private static func featurePriority(_ feature: [String: Any]) -> Int {
-        let properties = feature["properties"] as? [String: Any]
-        let kind = properties?["kind"] as? String ?? properties?["type"] as? String ?? ""
+        let kind = featureKind(feature)
         if kind == "driven" { return 0 }
         if kind == "planned" { return 1 }
         return 2
     }
 
-    private static func lineCoordinates(_ geometry: [String: Any]) -> [[Double]]? {
+    private static func featureKind(_ feature: [String: Any]) -> String {
+        let properties = feature["properties"] as? [String: Any]
+        return properties?["kind"] as? String ?? properties?["type"] as? String ?? ""
+    }
+
+    private static func lineStrings(_ geometry: [String: Any]) -> [[[Double]]] {
         switch geometry["type"] as? String {
         case "LineString":
-            return geometry["coordinates"] as? [[Double]]
+            return (geometry["coordinates"] as? [[Double]]).map { [$0] } ?? []
         case "MultiLineString":
-            return (geometry["coordinates"] as? [[[Double]]])?.max { $0.count < $1.count }
+            return geometry["coordinates"] as? [[[Double]]] ?? []
         default:
-            return nil
+            return []
         }
+    }
+
+    private static func referenceRoads(from features: [[String: Any]]) -> [Road] {
+        var roads: [Road] = []
+        for (featureIndex, feature) in features.enumerated() where featureKind(feature) == "reference" {
+            guard let geometry = feature["geometry"] as? [String: Any] else { continue }
+            let properties = feature["properties"] as? [String: Any]
+            let baseID = stringProperty("osm_way_id", in: properties) ?? stringProperty("id", in: properties) ?? "reference-\(featureIndex)"
+            let name = properties?["name"] as? String ?? "Reference road"
+            let highway = properties?["highway"] as? String ?? "unclassified"
+            for (lineIndex, coordinates) in lineStrings(geometry).enumerated() {
+                let points = coordinates.compactMap { coordinate -> RoadPoint? in
+                    guard coordinate.count >= 2 else { return nil }
+                    let lon = coordinate[0]
+                    let lat = coordinate[1]
+                    return RoadPoint(nodeID: coordinateNodeID(lat: lat, lon: lon), lat: lat, lon: lon)
+                }
+                guard points.count > 1 else { continue }
+                roads.append(Road(
+                    id: lineIndex == 0 ? baseID : "\(baseID)-\(lineIndex)",
+                    name: name,
+                    highway: highway,
+                    points: points
+                ))
+            }
+        }
+        return roads
+    }
+
+    private static func stringProperty(_ key: String, in properties: [String: Any]?) -> String? {
+        if let value = properties?[key] as? String { return value }
+        if let value = properties?[key] as? NSNumber { return value.stringValue }
+        return nil
+    }
+
+    private static func coordinateNodeID(lat: Double, lon: Double) -> String {
+        String(format: "geojson:%.7f:%.7f", lat, lon)
     }
 
     fileprivate static func parseISODate(_ value: String) -> Date? {

@@ -67,6 +67,11 @@ struct ImportedTrack: Equatable, Sendable {
     }
 }
 
+struct ImportedRouteDocument: Equatable, Sendable {
+    var track: ImportedTrack
+    var referenceRoads: [Road]
+}
+
 struct SnapPreview: Equatable, Sendable {
     var points: [GeoPoint]
     var snappedCount: Int

@@ -109,11 +109,13 @@ struct RouteEngineTests {
         </trkseg></trk></gpx>
         """
 
-        let track = try TrackImportService.parse(data: Data(gpx.utf8), fileName: "sample.gpx")
+        let document = try TrackImportService.parse(data: Data(gpx.utf8), fileName: "sample.gpx")
+        let track = document.track
 
         #expect(track.points.count == 2)
         #expect(track.points[0].point == GeoPoint(lat: 39.9, lon: 116.4))
         #expect(track.points.allSatisfy { $0.time != nil })
+        #expect(document.referenceRoads.isEmpty)
     }
 
     @Test func importsDrivenGeoJSONBeforeReferenceRoads() throws {
@@ -127,11 +129,34 @@ struct RouteEngineTests {
         }
         """
 
-        let track = try TrackImportService.parse(data: Data(geoJSON.utf8), fileName: "sample.geojson")
+        let document = try TrackImportService.parse(data: Data(geoJSON.utf8), fileName: "sample.geojson")
+        let track = document.track
 
         #expect(track.name == "HUD route")
         #expect(track.points.count == 2)
         #expect(track.points[0].point == GeoPoint(lat: 39.9, lon: 116.4))
+        #expect(document.referenceRoads.count == 1)
+        #expect(document.referenceRoads[0].points.count == 2)
+    }
+
+    @Test func importsReferenceRoadMetadataAndSharedCoordinateNodes() throws {
+        let geoJSON = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {"type":"Feature","properties":{"kind":"driven"},"geometry":{"type":"LineString","coordinates":[[0,0],[0.001,0]]}},
+            {"type":"Feature","properties":{"kind":"reference","osm_way_id":10,"highway":"primary","name":"A"},"geometry":{"type":"LineString","coordinates":[[0,0],[0.001,0]]}},
+            {"type":"Feature","properties":{"kind":"reference","osm_way_id":"11","highway":"secondary","name":"B"},"geometry":{"type":"MultiLineString","coordinates":[[[0.001,0],[0.001,0.001]],[[1,1],[2,2]]]}}
+          ]
+        }
+        """
+
+        let document = try TrackImportService.parse(data: Data(geoJSON.utf8), fileName: "enriched.geojson")
+
+        #expect(document.referenceRoads.count == 3)
+        #expect(document.referenceRoads[0].id == "10")
+        #expect(document.referenceRoads[0].highway == "primary")
+        #expect(document.referenceRoads[0].points.last?.nodeID == document.referenceRoads[1].points.first?.nodeID)
     }
 
     @Test func importedTrackUsesTimestampDurationAndInterpolatesCursorPosition() {

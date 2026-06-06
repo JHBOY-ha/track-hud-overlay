@@ -127,8 +127,13 @@ final class RouteLabModel {
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let track = try TrackImportService.parse(data: Data(contentsOf: url), fileName: url.lastPathComponent)
+            let document = try TrackImportService.parse(data: Data(contentsOf: url), fileName: url.lastPathComponent)
+            let track = document.track
             importedTrack = track
+            roads = document.referenceRoads
+            marks = []
+            route = .empty
+            selectedMarkID = nil
             snapPreview = .empty
             let bounds = MapBounds(points: track.coordinates, paddingM: 200)
             latitude = bounds.center.lat
@@ -138,7 +143,9 @@ final class RouteLabModel {
                 cursorSeconds = range.lowerBound
                 revealCursor()
             }
-            status = "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
+            status = document.referenceRoads.isEmpty
+                ? "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
+                : "已导入 \(track.name)，识别到 \(document.referenceRoads.count) 条参考道路，吸附预览已更新。"
             resetMap()
             rebuildSnapPreview()
         } catch {
