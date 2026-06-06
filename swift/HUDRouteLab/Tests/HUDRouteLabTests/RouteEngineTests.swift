@@ -149,6 +149,59 @@ struct RouteEngineTests {
         #expect(preview.points[1] == points[1])
     }
 
+    @Test func continuousSnapAvoidsBriefWrongRoadAtCrossing() {
+        let roads = [
+            Road(id: "main", name: "", highway: "primary", points: [
+                RoadPoint(nodeID: "main-a", lat: 0, lon: 0),
+                RoadPoint(nodeID: "cross", lat: 0, lon: 0.005),
+                RoadPoint(nodeID: "main-b", lat: 0, lon: 0.01),
+            ]),
+            Road(id: "crossing", name: "", highway: "secondary", points: [
+                RoadPoint(nodeID: "cross-a", lat: -0.005, lon: 0.005),
+                RoadPoint(nodeID: "cross", lat: 0, lon: 0.005),
+                RoadPoint(nodeID: "cross-b", lat: 0.005, lon: 0.005),
+            ]),
+        ]
+        let points = [
+            GeoPoint(lat: 0.00005, lon: 0.0046),
+            GeoPoint(lat: 0.00005, lon: 0.0048),
+            GeoPoint(lat: 0.00005, lon: 0.00502),
+            GeoPoint(lat: 0.00005, lon: 0.0052),
+            GeoPoint(lat: 0.00005, lon: 0.0054),
+        ]
+
+        let preview = RouteEngine.buildSnapPreview(points: points, roads: roads, maximumDistanceM: 30)
+
+        #expect(preview.snappedCount == points.count)
+        #expect(preview.points.allSatisfy { abs($0.lat) < 0.000001 })
+    }
+
+    @Test func continuousSnapStillAllowsSustainedTurnOntoNewRoad() {
+        let roads = [
+            Road(id: "horizontal", name: "", highway: "primary", points: [
+                RoadPoint(nodeID: "a", lat: 0, lon: 0),
+                RoadPoint(nodeID: "cross", lat: 0, lon: 0.005),
+            ]),
+            Road(id: "vertical", name: "", highway: "secondary", points: [
+                RoadPoint(nodeID: "cross", lat: 0, lon: 0.005),
+                RoadPoint(nodeID: "b", lat: 0.005, lon: 0.005),
+            ]),
+        ]
+        let points = [
+            GeoPoint(lat: 0.00002, lon: 0.0046),
+            GeoPoint(lat: 0.00002, lon: 0.0049),
+            GeoPoint(lat: 0.0002, lon: 0.00502),
+            GeoPoint(lat: 0.0005, lon: 0.00502),
+            GeoPoint(lat: 0.0008, lon: 0.00502),
+        ]
+
+        let preview = RouteEngine.buildSnapPreview(points: points, roads: roads, maximumDistanceM: 30)
+
+        #expect(abs((preview.points.first?.lat ?? 1)) < 0.000001)
+        #expect(abs((preview.points.last?.lon ?? 0) - 0.005) < 0.000001)
+        #expect((preview.points.last?.lat ?? 0) > 0.0007)
+    }
+
     @Test func importsGPXTrackWithTimes() throws {
         let gpx = """
         <gpx version="1.1"><trk><trkseg>

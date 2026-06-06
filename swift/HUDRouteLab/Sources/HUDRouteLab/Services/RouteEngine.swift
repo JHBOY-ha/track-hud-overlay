@@ -18,9 +18,15 @@ enum RouteEngine {
 
     private struct RoadSegment {
         var roadID: String
+        var wayID: Int
         var index: Int
         var a: GeoPoint
         var b: GeoPoint
+    }
+
+    private struct MatchCandidate {
+        var projection: RoadProjection
+        var wayID: Int
     }
 
     private struct GridKey: Hashable {
@@ -38,10 +44,12 @@ enum RouteEngine {
             self.cellSizeM = cellSizeM
             let latitude = roads.first?.points.first?.lat ?? 0
             lonScale = 111_320 * cos(latitude * .pi / 180)
-            for road in roads {
+            let wayIDs = RouteEngine.mergedWayIDs(roads: roads)
+            for (roadIndex, road) in roads.enumerated() {
                 for index in 0..<(road.points.count - 1) {
                     let segment = RoadSegment(
                         roadID: road.id,
+                        wayID: wayIDs[roadIndex],
                         index: index,
                         a: road.points[index].geo,
                         b: road.points[index + 1].geo
@@ -64,6 +72,10 @@ enum RouteEngine {
         }
 
         func project(_ target: GeoPoint, maximumDistanceM: Double) -> RoadProjection? {
+            candidates(for: target, maximumDistanceM: maximumDistanceM, limit: 1).first?.projection
+        }
+
+        func candidates(for target: GeoPoint, maximumDistanceM: Double, limit: Int = 6) -> [MatchCandidate] {
             let point = gridCoordinates(target)
             let centerX = Int(floor(point.x / cellSizeM))
             let centerY = Int(floor(point.y / cellSizeM))
@@ -74,15 +86,20 @@ enum RouteEngine {
                     candidates.formUnion(buckets[GridKey(x: x, y: y)] ?? [])
                 }
             }
-            var best: RoadProjection?
-            for index in candidates {
-                let projection = RouteEngine.project(target, onto: segments[index])
-                if projection.distanceM <= maximumDistanceM,
-                   best == nil || projection.distanceM < best!.distanceM {
-                    best = projection
+            var bestByWay: [Int: RoadProjection] = [:]
+            for segmentIndex in candidates {
+                let segment = segments[segmentIndex]
+                let projection = RouteEngine.project(target, onto: segment)
+                guard projection.distanceM <= maximumDistanceM else { continue }
+                if bestByWay[segment.wayID] == nil || projection.distanceM < bestByWay[segment.wayID]!.distanceM {
+                    bestByWay[segment.wayID] = projection
                 }
             }
-            return best
+            return bestByWay
+                .map { MatchCandidate(projection: $0.value, wayID: $0.key) }
+                .sorted { $0.projection.distanceM < $1.projection.distanceM }
+                .prefix(limit)
+                .map { $0 }
         }
 
         private func gridCoordinates(_ point: GeoPoint) -> (x: Double, y: Double) {
@@ -184,6 +201,7 @@ enum RouteEngine {
             for index in 0..<(road.points.count - 1) {
                 let projection = project(target, onto: RoadSegment(
                     roadID: road.id,
+                    wayID: 0,
                     index: index,
                     a: road.points[index].geo,
                     b: road.points[index + 1].geo
@@ -199,17 +217,23 @@ enum RouteEngine {
     static func buildSnapPreview(points: [GeoPoint], roads: [Road], maximumDistanceM: Double) -> SnapPreview {
         guard !points.isEmpty, !roads.isEmpty else { return .empty }
         let index = RoadProjectionIndex(roads: roads, cellSizeM: max(10, maximumDistanceM))
+        let candidateSets = points.map { index.candidates(for: $0, maximumDistanceM: maximumDistanceM) }
+        let matched = matchContinuousCandidates(
+            points: points,
+            candidateSets: candidateSets,
+            maximumDistanceM: maximumDistanceM
+        )
         var result: [GeoPoint] = []
         var offsets: [Double] = []
         result.reserveCapacity(points.count)
         offsets.reserveCapacity(points.count)
-        for point in points {
-            guard let projection = index.project(point, maximumDistanceM: maximumDistanceM) else {
+        for (point, projection) in zip(points, matched) {
+            guard let candidate = projection else {
                 result.append(point)
                 continue
             }
-            result.append(projection.point)
-            offsets.append(projection.distanceM)
+            result.append(candidate.projection.point)
+            offsets.append(candidate.projection.distanceM)
         }
         return SnapPreview(
             points: result,
@@ -217,6 +241,147 @@ enum RouteEngine {
             averageOffsetM: offsets.isEmpty ? 0 : offsets.reduce(0, +) / Double(offsets.count),
             maxOffsetM: offsets.max() ?? 0
         )
+    }
+
+    private static func matchContinuousCandidates(
+        points: [GeoPoint],
+        candidateSets: [[MatchCandidate]],
+        maximumDistanceM: Double
+    ) -> [MatchCandidate?] {
+        var result = Array<MatchCandidate?>(repeating: nil, count: points.count)
+        var start = 0
+        while start < points.count {
+            while start < points.count, candidateSets[start].isEmpty { start += 1 }
+            guard start < points.count else { break }
+            var end = start + 1
+            while end < points.count, !candidateSets[end].isEmpty { end += 1 }
+            let matched = matchCandidateRun(
+                points: Array(points[start..<end]),
+                candidateSets: Array(candidateSets[start..<end]),
+                maximumDistanceM: maximumDistanceM
+            )
+            for (offset, projection) in matched.enumerated() {
+                result[start + offset] = projection
+            }
+            start = end
+        }
+        return result
+    }
+
+    private static func matchCandidateRun(
+        points: [GeoPoint],
+        candidateSets: [[MatchCandidate]],
+        maximumDistanceM: Double
+    ) -> [MatchCandidate] {
+        guard points.count > 1 else { return [candidateSets[0][0]] }
+        let sigma = max(maximumDistanceM / 2.5, 2)
+        let twoSigmaSquared = 2 * sigma * sigma
+        var costs = candidateSets[0].map { emissionCost($0, twoSigmaSquared: twoSigmaSquared) }
+        var previousChoices: [[Int]] = []
+        previousChoices.reserveCapacity(points.count - 1)
+
+        for index in 1..<points.count {
+            var nextCosts = Array(repeating: Double.infinity, count: candidateSets[index].count)
+            var choices = Array(repeating: 0, count: candidateSets[index].count)
+            for currentIndex in candidateSets[index].indices {
+                let current = candidateSets[index][currentIndex]
+                for previousIndex in candidateSets[index - 1].indices {
+                    let candidateCost = costs[previousIndex] + transitionCost(
+                        sourceA: points[index - 1],
+                        sourceB: points[index],
+                        previous: candidateSets[index - 1][previousIndex],
+                        current: current
+                    )
+                    if candidateCost < nextCosts[currentIndex] {
+                        nextCosts[currentIndex] = candidateCost
+                        choices[currentIndex] = previousIndex
+                    }
+                }
+                nextCosts[currentIndex] += emissionCost(current, twoSigmaSquared: twoSigmaSquared)
+            }
+            costs = nextCosts
+            previousChoices.append(choices)
+        }
+
+        var choice = costs.indices.min(by: { costs[$0] < costs[$1] }) ?? 0
+        var matched = Array(repeating: candidateSets[0][0], count: points.count)
+        matched[points.count - 1] = candidateSets[points.count - 1][choice]
+        for index in stride(from: points.count - 2, through: 0, by: -1) {
+            choice = previousChoices[index][choice]
+            matched[index] = candidateSets[index][choice]
+        }
+        return matched
+    }
+
+    private static func emissionCost(_ candidate: MatchCandidate, twoSigmaSquared: Double) -> Double {
+        candidate.projection.distanceM * candidate.projection.distanceM / twoSigmaSquared
+    }
+
+    private static func transitionCost(
+        sourceA: GeoPoint,
+        sourceB: GeoPoint,
+        previous: MatchCandidate,
+        current: MatchCandidate
+    ) -> Double {
+        let sourceStep = distanceM(sourceA, sourceB)
+        let snappedStep = distanceM(previous.projection.point, current.projection.point)
+        return abs(snappedStep - sourceStep) + (previous.wayID == current.wayID ? 0 : 30)
+    }
+
+    private static func mergedWayIDs(roads: [Road]) -> [Int] {
+        var parent = Array(roads.indices)
+        func find(_ value: Int) -> Int {
+            var current = value
+            while parent[current] != current { current = parent[current] }
+            return current
+        }
+        func union(_ a: Int, _ b: Int) {
+            let rootA = find(a)
+            let rootB = find(b)
+            if rootA != rootB { parent[rootA] = rootB }
+        }
+        for firstIndex in roads.indices {
+            guard let first = roadEndpoints(roads[firstIndex]) else { continue }
+            for secondIndex in roads.indices where secondIndex > firstIndex {
+                guard let second = roadEndpoints(roads[secondIndex]) else { continue }
+                let pairs = [
+                    (first.start, first.startVector, second.start, second.startVector),
+                    (first.start, first.startVector, second.end, second.endVector),
+                    (first.end, first.endVector, second.start, second.startVector),
+                    (first.end, first.endVector, second.end, second.endVector),
+                ]
+                if pairs.contains(where: {
+                    distanceM($0.0, $0.2) <= 1.5
+                        && $0.1.x * $0.3.x + $0.1.y * $0.3.y <= -0.85
+                }) {
+                    union(firstIndex, secondIndex)
+                }
+            }
+        }
+        return roads.indices.map(find)
+    }
+
+    private static func roadEndpoints(_ road: Road) -> (
+        start: GeoPoint, startVector: (x: Double, y: Double),
+        end: GeoPoint, endVector: (x: Double, y: Double)
+    )? {
+        guard road.points.count > 1 else { return nil }
+        let start = road.points[0].geo
+        let startNext = road.points[1].geo
+        let end = road.points[road.points.count - 1].geo
+        let endPrevious = road.points[road.points.count - 2].geo
+        return (
+            start, unitVector(from: start, to: startNext),
+            end, unitVector(from: end, to: endPrevious)
+        )
+    }
+
+    private static func unitVector(from: GeoPoint, to: GeoPoint) -> (x: Double, y: Double) {
+        let latitude = (from.lat + to.lat) / 2 * .pi / 180
+        let x = (to.lon - from.lon) * 111_320 * cos(latitude)
+        let y = (to.lat - from.lat) * 110_540
+        let length = max(0.001, hypot(x, y))
+        return (x / length, y / length)
     }
 
     private static func project(_ target: GeoPoint, onto segment: RoadSegment) -> RoadProjection {
