@@ -5,6 +5,27 @@ struct GeoPoint: Codable, Equatable, Sendable {
     var lon: Double
 }
 
+struct ImportedTrackPoint: Equatable, Sendable {
+    var point: GeoPoint
+    var time: Date?
+}
+
+struct ImportedTrack: Equatable, Sendable {
+    var name: String
+    var points: [ImportedTrackPoint]
+
+    var coordinates: [GeoPoint] { points.map(\.point) }
+}
+
+struct SnapPreview: Equatable, Sendable {
+    var points: [GeoPoint]
+    var snappedCount: Int
+    var averageOffsetM: Double
+    var maxOffsetM: Double
+
+    static let empty = SnapPreview(points: [], snappedCount: 0, averageOffsetM: 0, maxOffsetM: 0)
+}
+
 struct RoadPoint: Codable, Equatable, Sendable {
     var nodeID: String
     var lat: Double
@@ -64,5 +85,31 @@ struct MapBounds: Equatable, Sendable {
         minLon = center.lon - lonDelta
         maxLat = center.lat + latDelta
         maxLon = center.lon + lonDelta
+    }
+
+    init(points: [GeoPoint], paddingM: Double = 0) {
+        let first = points.first ?? GeoPoint(lat: 0, lon: 0)
+        minLat = points.map(\.lat).min() ?? first.lat
+        minLon = points.map(\.lon).min() ?? first.lon
+        maxLat = points.map(\.lat).max() ?? first.lat
+        maxLon = points.map(\.lon).max() ?? first.lon
+        let centerLat = (minLat + maxLat) / 2
+        let latPadding = paddingM / 110_540
+        let lonPadding = paddingM / max(1, 111_320 * cos(centerLat * .pi / 180))
+        minLat -= latPadding
+        minLon -= lonPadding
+        maxLat += latPadding
+        maxLon += lonPadding
+    }
+
+    var center: GeoPoint {
+        GeoPoint(lat: (minLat + maxLat) / 2, lon: (minLon + maxLon) / 2)
+    }
+
+    var radiusM: Double {
+        max(
+            RouteEngine.distanceM(center, GeoPoint(lat: minLat, lon: center.lon)),
+            RouteEngine.distanceM(center, GeoPoint(lat: center.lat, lon: minLon))
+        )
     }
 }

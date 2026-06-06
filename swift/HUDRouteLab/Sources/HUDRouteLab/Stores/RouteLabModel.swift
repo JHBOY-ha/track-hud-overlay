@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Observation
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -8,6 +10,13 @@ final class RouteLabModel {
     var longitude = 116.405
     var radiusM = 1000.0
     var roads: [Road] = []
+    var importedTrack: ImportedTrack?
+    var snapPreview: SnapPreview = .empty
+    var snapDistanceM = 30.0 {
+        didSet { rebuildSnapPreview() }
+    }
+    var showsOriginalTrack = true
+    var showsSnapPreview = true
     var marks: [RouteMark] = []
     var route: RouteResult = .empty
     var cursorSeconds = 8.0 * 60 * 60
@@ -22,6 +31,7 @@ final class RouteLabModel {
     private let service = OSMRoadService()
 
     var center: GeoPoint { GeoPoint(lat: latitude, lon: longitude) }
+    var importedCoordinates: [GeoPoint] { importedTrack?.coordinates ?? [] }
     var orderedMarks: [RouteMark] { marks.sorted { $0.time < $1.time } }
     var hasDuplicateTimes: Bool {
         zip(orderedMarks, orderedMarks.dropFirst()).contains { $0.time >= $1.time }
@@ -68,8 +78,71 @@ final class RouteLabModel {
                     status = "已载入 \(fetched.count) 条道路。选择时间后点击道路添加标记。"
                     resetMap()
                 }
+                rebuildSnapPreview()
             } catch {
                 status = "路网获取失败：\(error.localizedDescription)"
+            }
+            isLoading = false
+        }
+    }
+
+    func importTrack() {
+        let panel = NSOpenPanel()
+        panel.title = "导入 GPX 或 GeoJSON 轨迹"
+        panel.prompt = "导入"
+        panel.allowedContentTypes = ["gpx", "geojson", "json"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let track = try TrackImportService.parse(data: Data(contentsOf: url), fileName: url.lastPathComponent)
+            importedTrack = track
+            snapPreview = .empty
+            let bounds = MapBounds(points: track.coordinates, paddingM: 200)
+            latitude = bounds.center.lat
+            longitude = bounds.center.lon
+            radiusM = max(250, bounds.radiusM)
+            status = "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
+            resetMap()
+            rebuildSnapPreview()
+        } catch {
+            status = "轨迹导入失败：\(error.localizedDescription)"
+        }
+    }
+
+    func clearImportedTrack() {
+        importedTrack = nil
+        snapPreview = .empty
+        status = "已移除导入轨迹。"
+    }
+
+    func completeRoadNetwork() {
+        guard let track = importedTrack else {
+            status = "请先导入 GPX 或 GeoJSON 轨迹。"
+            return
+        }
+        let bounds = MapBounds(points: track.coordinates, paddingM: max(200, snapDistanceM * 4))
+        guard bounds.radiusM <= 12_000 else {
+            status = "导入轨迹范围过大，当前单次补全最多支持约 24 km 范围。"
+            return
+        }
+        latitude = bounds.center.lat
+        longitude = bounds.center.lon
+        radiusM = max(250, bounds.radiusM)
+        isLoading = true
+        status = "正在补全导入轨迹周边路网..."
+        Task {
+            do {
+                roads = try await service.fetchRoads(bounds: bounds)
+                marks = []
+                route = .empty
+                selectedMarkID = nil
+                rebuildSnapPreview()
+                status = roads.isEmpty
+                    ? "导入轨迹周边没有找到道路。"
+                    : "已补全 \(roads.count) 条道路，吸附预览已更新。"
+                resetMap()
+            } catch {
+                status = "路网补全失败：\(error.localizedDescription)"
             }
             isLoading = false
         }
@@ -166,6 +239,14 @@ final class RouteLabModel {
 
     private func rebuildRoute() {
         route = RouteEngine.buildTimedRoute(roads: roads, marks: orderedMarks)
+    }
+
+    func rebuildSnapPreview() {
+        snapPreview = RouteEngine.buildSnapPreview(
+            points: importedCoordinates,
+            roads: roads,
+            maximumDistanceM: snapDistanceM
+        )
     }
 
     func export() {

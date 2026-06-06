@@ -88,6 +88,27 @@ enum RouteEngine {
         return best?.0
     }
 
+    static func buildSnapPreview(points: [GeoPoint], roads: [Road], maximumDistanceM: Double) -> SnapPreview {
+        guard !points.isEmpty, !roads.isEmpty else { return .empty }
+        var result: [GeoPoint] = []
+        var offsets: [Double] = []
+        for point in points {
+            guard let projection = projectToRoad(point, roads: roads),
+                  projection.distanceM <= maximumDistanceM else {
+                result.append(point)
+                continue
+            }
+            result.append(projection.point)
+            offsets.append(projection.distanceM)
+        }
+        return SnapPreview(
+            points: result,
+            snappedCount: offsets.count,
+            averageOffsetM: offsets.isEmpty ? 0 : offsets.reduce(0, +) / Double(offsets.count),
+            maxOffsetM: offsets.max() ?? 0
+        )
+    }
+
     static func buildTimedRoute(roads: [Road], marks input: [RouteMark], sampleHz: Double = 10) -> RouteResult {
         let marks = input.sorted { $0.time < $1.time }
         guard marks.count >= 2 else { return .empty }

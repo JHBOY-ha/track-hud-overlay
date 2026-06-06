@@ -51,6 +51,62 @@ struct RouteEngineTests {
         #expect((projection?.distanceM ?? 0) > 100)
     }
 
+    @Test func buildsSnapPreviewWithinMaximumDistance() {
+        let road = Road(
+            id: "1",
+            name: "test",
+            highway: "residential",
+            points: [
+                RoadPoint(nodeID: "1", lat: 0, lon: 0),
+                RoadPoint(nodeID: "2", lat: 0, lon: 0.01),
+            ]
+        )
+        let points = [
+            GeoPoint(lat: 0.0001, lon: 0.005),
+            GeoPoint(lat: 0.01, lon: 0.005),
+        ]
+
+        let preview = RouteEngine.buildSnapPreview(points: points, roads: [road], maximumDistanceM: 30)
+
+        #expect(preview.points.count == 2)
+        #expect(preview.snappedCount == 1)
+        #expect(abs(preview.points[0].lat) < 0.000001)
+        #expect(preview.points[1] == points[1])
+    }
+
+    @Test func importsGPXTrackWithTimes() throws {
+        let gpx = """
+        <gpx version="1.1"><trk><trkseg>
+          <trkpt lat="39.9" lon="116.4"><time>2026-06-06T00:00:00Z</time></trkpt>
+          <trkpt lat="39.91" lon="116.41"><time>2026-06-06T00:00:01.000Z</time></trkpt>
+        </trkseg></trk></gpx>
+        """
+
+        let track = try TrackImportService.parse(data: Data(gpx.utf8), fileName: "sample.gpx")
+
+        #expect(track.points.count == 2)
+        #expect(track.points[0].point == GeoPoint(lat: 39.9, lon: 116.4))
+        #expect(track.points.allSatisfy { $0.time != nil })
+    }
+
+    @Test func importsDrivenGeoJSONBeforeReferenceRoads() throws {
+        let geoJSON = """
+        {
+          "type": "FeatureCollection",
+          "features": [
+            {"type":"Feature","properties":{"kind":"reference"},"geometry":{"type":"LineString","coordinates":[[1,1],[2,2]]}},
+            {"type":"Feature","properties":{"kind":"driven","name":"HUD route","coordinateProperties":{"times":["2026-06-06T00:00:00.000Z","2026-06-06T00:00:01.000Z"]}},"geometry":{"type":"LineString","coordinates":[[116.4,39.9,0],[116.41,39.91,0]]}}
+          ]
+        }
+        """
+
+        let track = try TrackImportService.parse(data: Data(geoJSON.utf8), fileName: "sample.geojson")
+
+        #expect(track.name == "HUD route")
+        #expect(track.points.count == 2)
+        #expect(track.points[0].point == GeoPoint(lat: 39.9, lon: 116.4))
+    }
+
     @Test func samplesConnectedRouteAtTenHertz() throws {
         let road = Road(
             id: "1",

@@ -2,7 +2,10 @@ import Foundation
 
 actor OSMRoadService {
     func fetchRoads(center: GeoPoint, radiusM: Double) async throws -> [Road] {
-        let bounds = MapBounds(center: center, radiusM: radiusM)
+        try await fetchRoads(bounds: MapBounds(center: center, radiusM: radiusM))
+    }
+
+    func fetchRoads(bounds: MapBounds) async throws -> [Road] {
         let bbox = "\(bounds.minLon),\(bounds.minLat),\(bounds.maxLon),\(bounds.maxLat)"
         guard let url = URL(string: "https://www.openstreetmap.org/api/0.6/map?bbox=\(bbox)") else {
             throw URLError(.badURL)
