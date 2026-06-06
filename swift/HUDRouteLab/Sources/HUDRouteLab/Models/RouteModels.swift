@@ -72,6 +72,25 @@ struct ImportedRouteDocument: Equatable, Sendable {
     var referenceRoads: [Road]
 }
 
+struct ImportedVideo: Equatable, Sendable {
+    var name: String
+    var url: URL
+    var duration: Double
+    var startSeconds: Double
+    var embeddedTimecode: EmbeddedVideoTimecode?
+
+    var timelineRange: ClosedRange<Double> {
+        let start = min(86_399, max(0, startSeconds))
+        return start ... min(86_399, start + duration)
+    }
+}
+
+struct EmbeddedVideoTimecode: Equatable, Sendable {
+    var seconds: Double
+    var fps: Double
+    var frameCount: Int32
+}
+
 struct SnapPreview: Equatable, Sendable {
     var points: [GeoPoint]
     var snappedCount: Int

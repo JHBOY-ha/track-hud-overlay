@@ -4,6 +4,41 @@ import Testing
 @testable import HUDRouteLab
 
 struct RouteEngineTests {
+    @Test func parsesEmbeddedMP4Timecode() {
+        let fps: Int32 = 60
+        let frameCount = Int32(18 * 60 * 60) * fps + 12
+        let parsed = MP4TimecodeParser.parse(data: makeTmcdMP4(frameCount: frameCount, quickTimeLayout: false))
+
+        #expect(parsed?.frameCount == frameCount)
+        #expect(parsed?.fps == 60)
+        #expect(abs((parsed?.seconds ?? 0) - 64_800.2) < 0.000001)
+    }
+
+    @Test func parsesQuickTimeStyleEmbeddedTimecode() {
+        let frameCount: Int32 = 19 * 60 * 24 + 46 * 24 + 16
+        let parsed = MP4TimecodeParser.parse(data: makeTmcdMP4(frameCount: frameCount, quickTimeLayout: true))
+
+        #expect(parsed?.frameCount == frameCount)
+        #expect(parsed?.fps == 24)
+    }
+
+    @Test func returnsNilWhenVideoHasNoTimecodeTrack() {
+        let data = mp4Bytes(mp4Box("mdat", Data([1, 2, 3, 4])), mp4Box("moov"))
+        #expect(MP4TimecodeParser.parse(data: data) == nil)
+    }
+
+    @Test func videoTimelineRangeClampsEmbeddedTimecodeToCurrentDay() {
+        let video = ImportedVideo(
+            name: "late.mov",
+            url: URL(fileURLWithPath: "/tmp/late.mov"),
+            duration: 10,
+            startSeconds: 90_000,
+            embeddedTimecode: nil
+        )
+
+        #expect(video.timelineRange == 86_399 ... 86_399)
+    }
+
     @Test @MainActor func applicationMenuProvidesCommandQQuitAction() {
         let application = NSApplication.shared
         ApplicationMenu.install(on: application)
@@ -269,4 +304,64 @@ struct RouteEngineTests {
         let result = RouteEngine.buildTimedRoute(roads: roads, marks: marks)
         #expect(result.disconnectedPair == 0)
     }
+}
+
+private func makeTmcdMP4(frameCount: Int32, quickTimeLayout: Bool) -> Data {
+    let mdat = mp4Box("mdat", mp4Int32(frameCount))
+    let handler = mp4Box(
+        "hdlr",
+        Data(repeating: 0, count: 8),
+        Data("tmcd".utf8),
+        Data(repeating: 0, count: 12),
+        Data("Timecode".utf8),
+        Data([0])
+    )
+    let entry = quickTimeLayout
+        ? mp4Box(
+            "tmcd",
+            Data(repeating: 0, count: 8),
+            mp4UInt32(0),
+            mp4UInt32(2),
+            mp4UInt32(24_000),
+            mp4UInt32(1_000),
+            Data([24, 0, 0, 0])
+        )
+        : mp4Box(
+            "tmcd",
+            Data(repeating: 0, count: 8),
+            mp4UInt32(0),
+            mp4UInt32(60),
+            mp4UInt32(1),
+            Data([60, 0, 0, 0])
+        )
+    let stsd = mp4Box("stsd", Data(repeating: 0, count: 4), mp4UInt32(1), entry)
+    let stco = mp4Box("stco", Data(repeating: 0, count: 4), mp4UInt32(1), mp4UInt32(8))
+    let track = mp4Box("trak", mp4Box("mdia", handler, mp4Box("minf", mp4Box("stbl", stsd, stco))))
+    return mp4Bytes(mdat, mp4Box("moov", track))
+}
+
+private func mp4Box(_ type: String, _ payloads: Data...) -> Data {
+    let payload = mp4Bytes(payloads)
+    return mp4Bytes(mp4UInt32(UInt32(payload.count + 8)), Data(type.utf8), payload)
+}
+
+private func mp4Bytes(_ parts: Data...) -> Data {
+    mp4Bytes(parts)
+}
+
+private func mp4Bytes(_ parts: [Data]) -> Data {
+    parts.reduce(into: Data()) { $0.append($1) }
+}
+
+private func mp4UInt32(_ value: UInt32) -> Data {
+    Data([
+        UInt8((value >> 24) & 0xff),
+        UInt8((value >> 16) & 0xff),
+        UInt8((value >> 8) & 0xff),
+        UInt8(value & 0xff),
+    ])
+}
+
+private func mp4Int32(_ value: Int32) -> Data {
+    mp4UInt32(UInt32(bitPattern: value))
 }

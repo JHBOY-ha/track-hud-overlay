@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import Observation
 import UniformTypeIdentifiers
@@ -27,6 +28,9 @@ final class RouteLabModel {
     var showsSnapPreview = true { didSet { mapContentRevision += 1 } }
     var marks: [RouteMark] = []
     var route: RouteResult = .empty
+    var importedVideo: ImportedVideo?
+    @ObservationIgnored var videoPlayer: AVPlayer?
+    var showsVideoPreview = true
     var cursorSeconds = 8.0 * 60 * 60
     var isPlaying = false
     var timelineHours = 24.0
@@ -82,7 +86,13 @@ final class RouteLabModel {
         Calendar.current.startOfDay(for: .now).addingTimeInterval(cursorSeconds)
     }
     var timelineEndSeconds: Double { min(86_399, timelineStartSeconds + timelineHours * 3600) }
-    var playbackRange: ClosedRange<Double> { importedTimelineRange ?? 0 ... 86_399 }
+    var videoTimelineRange: ClosedRange<Double>? { importedVideo?.timelineRange }
+    var playbackRange: ClosedRange<Double> {
+        let ranges = [importedTimelineRange, videoTimelineRange].compactMap { $0 }
+        guard let lower = ranges.map(\.lowerBound).min(),
+              let upper = ranges.map(\.upperBound).max() else { return 0 ... 86_399 }
+        return lower ... upper
+    }
     var routeIssueText: String? {
         if hasDuplicateTimes { return "时间标记必须严格递增且不能重复。" }
         if let pair = route.disconnectedPair { return "T\(pair + 1) 与 T\(pair + 2) 不在同一连通路网中。" }
@@ -158,6 +168,45 @@ final class RouteLabModel {
         importedTrack = nil
         snapPreview = .empty
         status = "已移除导入轨迹。"
+    }
+
+    func importVideo() {
+        pausePlayback()
+        let panel = NSOpenPanel()
+        panel.title = "导入视频"
+        panel.prompt = "导入"
+        panel.allowedContentTypes = ["mov", "mp4", "m4v"].compactMap { UTType(filenameExtension: $0) }
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        isLoading = true
+        status = "正在读取视频与内置 timecode..."
+        Task {
+            do {
+                let video = try await VideoImportService.load(url: url)
+                videoPlayer = AVPlayer(url: video.url)
+                videoPlayer?.actionAtItemEnd = .pause
+                importedVideo = video
+                cursorSeconds = video.startSeconds
+                showsVideoPreview = true
+                revealCursor()
+                seekVideo()
+                if let timecode = video.embeddedTimecode {
+                    status = "已导入 \(video.name)，读取到 \(formatTimecode(timecode.seconds, fps: timecode.fps)) @ \(timecode.fps.formatted()) fps。"
+                } else {
+                    status = "已导入 \(video.name)，未发现内置 tmcd timecode，视频从 00:00:00 开始。"
+                }
+            } catch {
+                status = "视频导入失败：\(error.localizedDescription)"
+            }
+            isLoading = false
+        }
+    }
+
+    func clearImportedVideo() {
+        pausePlayback()
+        videoPlayer = nil
+        importedVideo = nil
+        status = "已移除导入视频。"
     }
 
     func completeRoadNetwork() {
@@ -280,6 +329,8 @@ final class RouteLabModel {
             revealCursor()
         }
         isPlaying = true
+        seekVideo()
+        syncVideoPlayback()
         playbackTask?.cancel()
         playbackTask = Task { [weak self] in
             var previous = Date.now
@@ -296,6 +347,7 @@ final class RouteLabModel {
 
     func pausePlayback() {
         isPlaying = false
+        videoPlayer?.pause()
         playbackTask?.cancel()
         playbackTask = nil
     }
@@ -303,6 +355,7 @@ final class RouteLabModel {
     func scrubTimeline(to seconds: Double) {
         pausePlayback()
         cursorSeconds = min(86_399, max(0, seconds))
+        seekVideo()
     }
 
     func advancePlayback(by seconds: Double) {
@@ -310,9 +363,46 @@ final class RouteLabModel {
         let end = playbackRange.upperBound
         cursorSeconds = min(end, cursorSeconds + max(0, seconds))
         revealCursor()
+        syncVideoPlayback()
         if cursorSeconds >= end {
             pausePlayback()
         }
+    }
+
+    private func syncVideoPlayback() {
+        guard let range = videoTimelineRange, let videoPlayer else { return }
+        if range.contains(cursorSeconds) {
+            if videoPlayer.rate == 0 {
+                seekVideo()
+                videoPlayer.play()
+            }
+        } else {
+            videoPlayer.pause()
+        }
+    }
+
+    private func seekVideo() {
+        guard let video = importedVideo, let videoPlayer else { return }
+        let seconds = min(video.duration, max(0, cursorSeconds - video.startSeconds))
+        videoPlayer.seek(
+            to: CMTime(seconds: seconds, preferredTimescale: 600),
+            toleranceBefore: .zero,
+            toleranceAfter: .zero
+        )
+    }
+
+    private func formatTimecode(_ seconds: Double, fps: Double) -> String {
+        let roundedFPS = max(1, Int(fps.rounded()))
+        let totalFrames = max(0, Int((seconds * Double(roundedFPS)).rounded()))
+        let frame = totalFrames % roundedFPS
+        let totalSeconds = totalFrames / roundedFPS
+        return String(
+            format: "%02d:%02d:%02d:%02d",
+            totalSeconds / 3600,
+            totalSeconds % 3600 / 60,
+            totalSeconds % 60,
+            frame
+        )
     }
 
     func revealCursor() {
