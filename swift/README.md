@@ -1,89 +1,86 @@
-# HUD5 — Swift / macOS native rewrite
+# HUD5 — Swift / macOS 原生端
 
-Native macOS rewrite of the HUD5 overlay tool, migrating off the React + Vite +
-Puppeteer/FFmpeg stack. The web app under `../src` is retained during migration
-as the parity reference; ports are cross-checked against its `scripts/*.test.*`
-suites.
+Web 端（`../src`）负责 HUD 叠加层生成和透明视频导出；Swift 端专注于**路线编辑**（HUDRouteLab），同时提供原生 ProRes 导出管线作为 Puppeteer + FFmpeg 的替代方案。
 
-## Packages
+## 包结构
 
-| Package | Kind | What it is |
-|---|---|---|
-| `HUD5Core` | library + tests | Pure logic ported 1:1 from `src/util` + `src/data`: projection, heading, units, timecode, coordinate systems, telemetry (CSV/JSON), GPS denoise, road snapping, track ingestion (GPX/GeoJSON), pose sampling. No UI, no platform deps. |
-| `HUD5Export` | library + executable | `HUD5Render` (CoreGraphics HUD renderer) + `hud5-export` CLI (AVFoundation ProRes 4444 **alpha** writer). Replaces Puppeteer + FFmpeg. |
-| `HUD5App` | executable | SwiftUI preview app. Reuses `HUD5Core` + `HUD5Render`; playback + file loading. **UI work continues in Xcode.** |
-| `HUDRouteLab` | executable | Native SwiftUI/AppKit road network route and timeline editor. Imports GPX/GeoJSON and MOV/MP4 with embedded `tmcd` timecode, previews synchronized video and road snapping, completes OSM roads, and exports HUD-compatible GeoJSON. |
+| 包              | 类型      | 说明                                                                                                                                                                                                                    |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HUD5Core`    | 库 + 测试 | 从 `src/util` + `src/data` 1:1 移植的纯逻辑层：投影、航向、单位、时间码、坐标系、遥测（CSV/JSON）、GPS 降噪、路网吸附、轨迹解析（GPX/GeoJSON）、姿态采样。无 UI、无平台依赖。                                       |
+| `HUD5Export`  | 库 + CLI  | `HUD5Render`（CoreGraphics HUD 渲染器）+ `hud5-export` CLI（AVFoundation ProRes 4444 **alpha** 写入器）。替代 Puppeteer + FFmpeg。                                                                            |
+| `HUD5App`     | 可执行    | SwiftUI 预览 App，复用 `HUD5Core` + `HUD5Render`；回放 + 文件加载。**UI 开发在 Xcode 中进行。**                                                                                                               |
+| `HUDRouteLab` | 可执行    | **主力路线编辑器。** SwiftUI/MapKit 路网路线与时间线编辑器。导入 GPX/GeoJSON 轨迹和 MOV/MP4 视频（含嵌入 `tmcd` 时间码），预览同步视频与路网吸附，在地图上编辑航点，导出 HUD 兼容的 GeoJSON 供 Web 叠加层使用。 |
 
-## Build & test (command line)
+## 构建与测试（命令行）
 
 ```bash
-# Data layer — fully testable without Xcode
+# 数据层 — 无需 Xcode 即可测试
 cd HUD5Core && swift test
 
-# Export pipeline
+# 导出管线
 cd HUD5Export && swift test
 swift run hud5-export --track ../../local/some.gpx --out out.mov --fps 60 --duration 10
 
-# Preview app (compiles + launches as a bare binary; use Xcode for real UI work)
+# 预览 App（编译 + 启动；正式 UI 开发请用 Xcode）
 cd HUD5App && swift build && swift run
 
-# Native HUD Route Lab
+# 路线编辑器
 cd HUDRouteLab && ./script/build_and_run.sh
 ```
 
-### hud5-export options
+### hud5-export 参数
 
 ```
---telemetry <path>   CSV or JSON
---track <path>       GPX or GeoJSON
---out <path>         output .mov (ProRes 4444, alpha)
+--telemetry <path>   CSV 或 JSON
+--track <path>       GPX 或 GeoJSON
+--out <path>         输出 .mov（ProRes 4444，含 alpha）
 --fps <n>            [60]
---duration <sec>     default = source duration
---start <sec>        playhead start [0]
+--duration <sec>     默认 = 源时长
+--start <sec>        播放头起点 [0]
 --unit kmh|mph       [kmh]
 --width/--height     [1920x1080]
 --telemetry-offset / --track-offset <sec>
---snap <m>           snap driven onto reference layer (0 = off)
+--snap <m>           吸附到参考层（0 = 关闭）
 ```
 
-Verify alpha output:
+验证 alpha 输出：
+
 ```bash
 ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,profile,pix_fmt out.mov
-# expect: prores / 4444 / yuva444p12le
+# 预期：prores / 4444 / yuva444p12le
 ```
 
-## Open in Xcode
+## 在 Xcode 中打开
 
-Xcode opens a `Package.swift` directly — no `.xcodeproj` needed:
+Xcode 可直接打开 `Package.swift`，无需 `.xcodeproj`：
 
 ```bash
-xed HUD5App        # or: open HUD5App/Package.swift
+xed HUD5App        # 或：open HUD5App/Package.swift
 ```
 
-Xcode gives you SwiftUI Previews, the View Debugger (inspect CALayer/HUD
-geometry), and Instruments (per-frame timing, CVPixelBuffer leaks) — the tools
-the export and UI stages depend on.
+Xcode 提供 SwiftUI Previews、View Debugger（检查 CALayer/HUD 几何）和 Instruments（逐帧计时、CVPixelBuffer 泄漏检测）——导出和 UI 阶段的必备工具。
 
-## Migration status
+## 进度
 
-- [x] Data layer (`HUD5Core`) — ported + tested against the TS suites
-- [x] Export pipeline (`HUD5Export`) — native ProRes 4444 alpha, verified end-to-end
-- [x] Preview app skeleton (`HUD5App`) — compiles + launches; playback + loading
-- [x] Design tokens + fonts — exact oklch→sRGB colors, bundled Archivo +
-      JetBrains Mono (matches src/styles/tokens.css)
-- [x] Speedometer fidelity — geometry + dark radial disc (Speedometer.tsx)
-- [x] Top-left progress + top-right position panels — match their TSX sources
-- [x] Minimap — disc, ring, heading-up 50m window, layers, car arrow,
-      compass N, scale bar, route/player/altitude labels (Minimap.tsx)
-- [x] Minimap 70° perspective tilt — 3D ground plane via the CSS
-      perspective+rotateX port (car at 0.72 anchor, road recedes upward)
-- [x] Minimap soft edge fade + teal center glow — CoreGraphics transparency
-      mask + stacked radial gradients matching Minimap.tsx
-- [x] AVPlayer video time source + sync in the app — native video layer behind
-      HUD, shared timeline driven from `AVPlayer.currentTime()`
-- [ ] Edit mode: draggable layout + advanced settings, persisted to UserDefaults
-- [ ] `videoTimecode` equivalent via AVFoundation timecode tracks
-- [ ] Retire the web stack once at parity
+### HUD5Core / HUD5Export / HUD5App（HUD 渲染-未完成）
 
-The video / edit-mode stages are best done in Xcode (View Debugger for layer
-geometry, live Previews for tuning).
+- [X] 数据层（`HUD5Core`）— 移植完成 + 通过 TS 测试套件验证
+- [X] 导出管线（`HUD5Export`）— 原生 ProRes 4444 alpha，端到端验证通过
+- [X] 预览 App 骨架（`HUD5App`）— 编译 + 启动；回放 + 文件加载
+- [X] 设计令牌 + 字体 — oklch→sRGB 精确转换，捆绑 Archivo + JetBrains Mono
+- [X] 速度表、进度面板、位置面板 — 与 TSX 源一致
+- [X] 小地图 — 圆盘、环、航向窗口、图层、车辆箭头、指北针、比例尺、透视倾斜、边缘淡化 + 辉光
+- [X] AVPlayer 视频时间源 + 同步
+- [ ] 编辑模式：可拖拽布局 + 高级设置，持久化到 UserDefaults
+
+### HUDRouteLab（路线编辑）— 活跃开发中
+
+- [X] 基于 MapKit 的路线编辑器，支持交互式航点编辑
+- [X] OSM 路网获取 + Dijkstra 寻路路网吸附
+- [X] GPX / GeoJSON 轨迹导入，含参考道路识别
+- [X] MOV/MP4 视频导入，含嵌入 `tmcd` 时间码提取
+- [X] 同步视频时间线预览 + 回放控制
+- [X] 轨迹时间线拖动 + 吸附预览
+- [X] 绘制路径缓存与路线采样优化
+- [X] GeoJSON 导出供 Web HUD 使用
+- [ ] 批量路线处理
