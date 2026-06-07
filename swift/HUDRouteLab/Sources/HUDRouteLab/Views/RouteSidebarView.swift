@@ -133,7 +133,7 @@ struct RouteSidebarView: View {
         } label: {
             HStack(spacing: 9) {
                 Image(systemName: model.disconnectedMarkIDs.contains(mark.id) ? "exclamationmark.circle.fill" : "mappin.circle.fill")
-                    .foregroundStyle(model.disconnectedMarkIDs.contains(mark.id) ? .red : .orange)
+                    .foregroundStyle(markColor(mark))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text("T\(index + 1)  \(mark.time.formatted(date: .omitted, time: .standard))")
@@ -145,11 +145,23 @@ struct RouteSidebarView: View {
                 Spacer()
             }
             .contentShape(Rectangle())
+            .padding(.vertical, 3)
+            .padding(.horizontal, 5)
+            .background(
+                model.selectedMarkID == mark.id ? Color.accentColor.opacity(0.16) : Color.clear,
+                in: RoundedRectangle(cornerRadius: 6)
+            )
         }
         .buttonStyle(.plain)
         .contextMenu {
             Button("重新指定道路位置") { model.selectMarkForRelocation(mark.id) }
             Button("删除", role: .destructive) { model.deleteMark(mark.id) }
         }
+    }
+
+    private func markColor(_ mark: RouteMark) -> Color {
+        if model.disconnectedMarkIDs.contains(mark.id) { return .red }
+        if model.selectedMarkID == mark.id { return .green }
+        return .orange
     }
 }

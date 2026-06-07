@@ -18,10 +18,12 @@ struct RoadMapView: NSViewRepresentable {
     var commandRevision: Int
     var contentRevision: Int
     var onClick: (GeoPoint) -> Void
+    var onSelectMark: (Int) -> Void
 
     func makeNSView(context: Context) -> RoadMapNSView {
         let view = RoadMapNSView()
         view.onClick = onClick
+        view.onSelectMark = onSelectMark
         return view
     }
 
@@ -46,6 +48,7 @@ struct RoadMapView: NSViewRepresentable {
         view.selectedMarkID = selectedMarkID
         view.disconnectedMarkIDs = disconnectedMarkIDs
         view.onClick = onClick
+        view.onSelectMark = onSelectMark
         if view.commandRevision != commandRevision {
             view.commandRevision = commandRevision
             switch command {
@@ -72,6 +75,7 @@ final class RoadMapNSView: NSView {
     var selectedMarkID: Int?
     var disconnectedMarkIDs: Set<Int> = []
     var onClick: ((GeoPoint) -> Void)?
+    var onSelectMark: ((Int) -> Void)?
     var commandRevision = 0
     var contentRevision = -1
 
@@ -145,6 +149,10 @@ final class RoadMapNSView: NSView {
         defer { dragStart = nil }
         guard !dragged else { return }
         let point = convert(event.locationInWindow, from: nil)
+        if let mark = closestMark(to: point, maximumDistance: 16) {
+            onSelectMark?(mark.id)
+            return
+        }
         onClick?(unproject(screenToMap(point)))
     }
 
@@ -188,6 +196,19 @@ final class RoadMapNSView: NSView {
 
     private func screenToMap(_ point: CGPoint) -> CGPoint {
         CGPoint(x: (point.x - offset.x) / scale, y: (point.y - offset.y) / scale)
+    }
+
+    private func closestMark(to point: CGPoint, maximumDistance: Double) -> RouteMark? {
+        marks.min {
+            distance(from: point, to: mapToScreen(project($0.point)))
+                < distance(from: point, to: mapToScreen(project($1.point)))
+        }.flatMap {
+            distance(from: point, to: mapToScreen(project($0.point))) <= maximumDistance ? $0 : nil
+        }
+    }
+
+    private func distance(from lhs: CGPoint, to rhs: CGPoint) -> Double {
+        hypot(lhs.x - rhs.x, lhs.y - rhs.y)
     }
 
     private func project(_ point: GeoPoint) -> CGPoint {

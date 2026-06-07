@@ -108,6 +108,34 @@ struct RouteEngineTests {
         #expect(!model.isPlaying)
     }
 
+    @Test @MainActor func deletingSelectedMarkClearsSelectionAndRebuildsRoute() {
+        let model = RouteLabModel()
+        let road = Road(
+            id: "1",
+            name: "test",
+            highway: "residential",
+            points: [
+                RoadPoint(nodeID: "1", lat: 0, lon: 0),
+                RoadPoint(nodeID: "2", lat: 0, lon: 0.001),
+            ]
+        )
+        let start = Calendar.current.startOfDay(for: .now)
+        model.roads = [road]
+        model.marks = [
+            RouteMark(id: 1, time: start, roadID: road.id, segmentIndex: 0, segmentT: 0, point: road.points[0].geo),
+            RouteMark(id: 2, time: start.addingTimeInterval(1), roadID: road.id, segmentIndex: 0, segmentT: 1, point: road.points[1].geo),
+        ]
+        model.rebuildCurrentRoute()
+        #expect(!model.route.samples.isEmpty)
+
+        model.selectMarkForRelocation(1)
+        model.deleteSelectedMark()
+
+        #expect(model.marks.map(\.id) == [2])
+        #expect(model.selectedMarkID == nil)
+        #expect(model.route.samples.isEmpty)
+    }
+
     @Test @MainActor func shuttleControlsCycleForwardAndReversePlaybackRates() {
         let model = RouteLabModel()
         model.cursorSeconds = 1_000

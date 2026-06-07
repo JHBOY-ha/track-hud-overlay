@@ -219,7 +219,10 @@ struct TimelinePanel: View {
                                         rebuild: false
                                     )
                                 }
-                                .onEnded { _ in model.rebuildCurrentRoute() }
+                                .onEnded { _ in
+                                    model.selectMarkForRelocation(mark.id)
+                                    model.rebuildCurrentRoute()
+                                }
                         )
                     }
                 }

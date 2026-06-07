@@ -312,6 +312,13 @@ final class RouteLabModel {
         if selectedMarkID == id { selectedMarkID = nil }
         rebuildRoute()
     }
+
+    func deleteSelectedMark() {
+        guard let selectedMarkID else { return }
+        deleteMark(selectedMarkID)
+        status = "已删除选中的时间标记。"
+    }
+
     func clearMarks() {
         marks = []
         selectedMarkID = nil
@@ -346,7 +353,7 @@ final class RouteLabModel {
 
     func selectMarkForRelocation(_ id: Int) {
         selectedMarkID = id
-        status = "点击道路，为选中的标记重新指定位置。"
+        status = "已选中时间标记。按 Delete 删除，或点击道路重新指定位置。"
     }
 
     func setTimelineHours(_ hours: Double) {

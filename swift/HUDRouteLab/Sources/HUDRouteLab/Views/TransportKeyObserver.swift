@@ -5,6 +5,7 @@ struct TransportKeyObserver: NSViewRepresentable {
     var onTogglePlayback: () -> Void
     var onReverse: () -> Void
     var onForward: () -> Void
+    var onDeleteSelectedMark: () -> Void
 
     func makeNSView(context: Context) -> TransportKeyNSView {
         let view = TransportKeyNSView()
@@ -20,6 +21,7 @@ struct TransportKeyObserver: NSViewRepresentable {
         view.onTogglePlayback = onTogglePlayback
         view.onReverse = onReverse
         view.onForward = onForward
+        view.onDeleteSelectedMark = onDeleteSelectedMark
     }
 }
 
@@ -27,6 +29,7 @@ final class TransportKeyNSView: NSView {
     var onTogglePlayback: (() -> Void)?
     var onReverse: (() -> Void)?
     var onForward: (() -> Void)?
+    var onDeleteSelectedMark: (() -> Void)?
     private var eventMonitor: Any?
 
     override func viewDidMoveToWindow() {
@@ -44,6 +47,10 @@ final class TransportKeyNSView: NSView {
     private func handle(_ event: NSEvent) -> Bool {
         guard event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
               !(window?.firstResponder is NSTextView) else { return false }
+        if event.keyCode == 51 || event.keyCode == 117 {
+            onDeleteSelectedMark?()
+            return true
+        }
         switch event.charactersIgnoringModifiers?.lowercased() {
         case " ":
             onTogglePlayback?()

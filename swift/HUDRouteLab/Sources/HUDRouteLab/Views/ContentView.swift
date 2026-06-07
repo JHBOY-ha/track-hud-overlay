@@ -28,6 +28,14 @@ struct ContentView: View {
                 .disabled(model.marks.isEmpty)
 
                 Button {
+                    model.deleteSelectedMark()
+                } label: {
+                    Label("删除所选标记", systemImage: "trash.slash")
+                }
+                .disabled(model.selectedMarkID == nil)
+                .help("删除所选时间标记（Delete）")
+
+                Button {
                     model.clearMarks()
                 } label: {
                     Label("清空标记", systemImage: "trash")
@@ -95,7 +103,8 @@ struct ContentView: View {
             TransportKeyObserver(
                 onTogglePlayback: model.togglePlayback,
                 onReverse: model.shuttleReverse,
-                onForward: model.shuttleForward
+                onForward: model.shuttleForward,
+                onDeleteSelectedMark: model.deleteSelectedMark
             )
         }
     }
@@ -118,7 +127,8 @@ struct ContentView: View {
                 command: model.mapCommand,
                 commandRevision: model.mapCommandRevision,
                 contentRevision: model.mapContentRevision,
-                onClick: model.clickMap
+                onClick: model.clickMap,
+                onSelectMark: model.selectMarkForRelocation
             )
 
             if model.roads.isEmpty && model.importedTrack == nil && !model.isLoading {
