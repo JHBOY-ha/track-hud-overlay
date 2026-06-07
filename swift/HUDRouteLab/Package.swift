@@ -6,7 +6,10 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "HUDRouteLab", targets: ["HUDRouteLab"])],
     targets: [
-        .executableTarget(name: "HUDRouteLab"),
+        .executableTarget(
+            name: "HUDRouteLab",
+            resources: [.process("Resources")]
+        ),
         .testTarget(name: "HUDRouteLabTests", dependencies: ["HUDRouteLab"])
     ]
 )

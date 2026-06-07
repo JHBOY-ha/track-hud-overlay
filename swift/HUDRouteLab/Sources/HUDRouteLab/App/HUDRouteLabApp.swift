@@ -20,6 +20,9 @@ enum HUDRouteLabMain {
         let delegate = AppDelegate()
         application.delegate = delegate
         application.setActivationPolicy(.regular)
+        if let iconURL = Bundle.module.url(forResource: "HUDRouteLab", withExtension: "icns") {
+            application.applicationIconImage = NSImage(contentsOf: iconURL)
+        }
         ApplicationMenu.install(on: application)
         application.run()
     }

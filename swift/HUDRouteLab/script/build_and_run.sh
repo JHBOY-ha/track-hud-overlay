@@ -10,8 +10,9 @@ cd "$ROOT_DIR"
 swift build
 
 rm -rf "$APP_DIR"
-mkdir -p "$APP_DIR/Contents/MacOS"
+mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 cp "$BUILD_DIR/debug/HUDRouteLab" "$APP_DIR/Contents/MacOS/HUDRouteLab"
+cp "$ROOT_DIR/Sources/HUDRouteLab/Resources/HUDRouteLab.icns" "$APP_DIR/Contents/Resources/HUDRouteLab.icns"
 
 cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -24,6 +25,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<'PLIST'
   <string>com.local.HUDRouteLab</string>
   <key>CFBundleName</key>
   <string>HUD Route Lab</string>
+  <key>CFBundleIconFile</key>
+  <string>HUDRouteLab</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -42,6 +45,7 @@ codesign --force --sign - "$APP_DIR"
 
 if [[ "${1:-}" == "--verify" ]]; then
   test -x "$APP_DIR/Contents/MacOS/HUDRouteLab"
+  test -f "$APP_DIR/Contents/Resources/HUDRouteLab.icns"
   plutil -lint "$APP_DIR/Contents/Info.plist"
   exit 0
 fi
