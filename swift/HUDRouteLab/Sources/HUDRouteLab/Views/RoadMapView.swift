@@ -8,6 +8,7 @@ struct RoadMapView: NSViewRepresentable {
     var snapPreview: [GeoPoint]
     var importedCursorPoint: GeoPoint?
     var snappedCursorPoint: GeoPoint?
+    var routeCursorPoint: GeoPoint?
     var marks: [RouteMark]
     var center: GeoPoint
     var radiusM: Double
@@ -36,6 +37,7 @@ struct RoadMapView: NSViewRepresentable {
         }
         view.importedCursorPoint = importedCursorPoint
         view.snappedCursorPoint = snappedCursorPoint
+        view.routeCursorPoint = routeCursorPoint
         if view.centerPoint != center || view.radiusM != radiusM {
             view.centerPoint = center
             view.radiusM = radiusM
@@ -63,6 +65,7 @@ final class RoadMapNSView: NSView {
     var snapPreview: [GeoPoint] = []
     var importedCursorPoint: GeoPoint?
     var snappedCursorPoint: GeoPoint?
+    var routeCursorPoint: GeoPoint?
     var marks: [RouteMark] = []
     var centerPoint = GeoPoint(lat: 0, lon: 0)
     var radiusM = 1000.0
@@ -108,6 +111,9 @@ final class RoadMapNSView: NSView {
         }
         if let snappedCursorPoint {
             drawCursorPoint(snappedCursorPoint, color: .systemGreen, filled: true)
+        }
+        if let routeCursorPoint {
+            drawCursorPoint(routeCursorPoint, color: .systemYellow, filled: true)
         }
         for (index, mark) in marks.sorted(by: { $0.time < $1.time }).enumerated() {
             drawMark(

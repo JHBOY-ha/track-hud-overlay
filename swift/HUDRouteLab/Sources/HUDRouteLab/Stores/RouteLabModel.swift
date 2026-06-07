@@ -27,7 +27,15 @@ final class RouteLabModel {
     var showsOriginalTrack = true { didSet { mapContentRevision += 1 } }
     var showsSnapPreview = true { didSet { mapContentRevision += 1 } }
     var marks: [RouteMark] = []
-    var route: RouteResult = .empty
+    var route: RouteResult = .empty {
+        didSet {
+            routeSampleSeconds = route.samples.map {
+                $0.time.timeIntervalSince(Calendar.current.startOfDay(for: $0.time))
+            }
+            mapContentRevision += 1
+        }
+    }
+    private var routeSampleSeconds: [Double] = []
     var importedVideo: ImportedVideo?
     @ObservationIgnored var videoPlayer: AVPlayer?
     var showsVideoPreview = true
@@ -67,6 +75,34 @@ final class RouteLabModel {
             timelineSeconds: importedTimelineSeconds
         )
     }
+    var routeTimelineRange: ClosedRange<Double>? {
+        guard let first = routeSampleSeconds.first, let last = routeSampleSeconds.last else { return nil }
+        return first ... last
+    }
+    var routeCursorPoint: GeoPoint? {
+        guard routeTimelineRange?.contains(cursorSeconds) == true,
+              route.samples.count == routeSampleSeconds.count else { return nil }
+        if cursorSeconds <= routeSampleSeconds[0] { return route.samples[0].point }
+        if cursorSeconds >= routeSampleSeconds[routeSampleSeconds.count - 1] { return route.samples.last?.point }
+        var low = 1
+        var high = routeSampleSeconds.count - 1
+        while low < high {
+            let middle = (low + high) / 2
+            if routeSampleSeconds[middle] < cursorSeconds {
+                low = middle + 1
+            } else {
+                high = middle
+            }
+        }
+        let duration = routeSampleSeconds[low] - routeSampleSeconds[low - 1]
+        let fraction = duration > 0 ? (cursorSeconds - routeSampleSeconds[low - 1]) / duration : 0
+        let a = route.samples[low - 1].point
+        let b = route.samples[low].point
+        return GeoPoint(
+            lat: a.lat + (b.lat - a.lat) * fraction,
+            lon: a.lon + (b.lon - a.lon) * fraction
+        )
+    }
     var orderedMarks: [RouteMark] { marks.sorted { $0.time < $1.time } }
     var hasDuplicateTimes: Bool {
         zip(orderedMarks, orderedMarks.dropFirst()).contains { $0.time >= $1.time }
@@ -88,7 +124,7 @@ final class RouteLabModel {
     var timelineEndSeconds: Double { min(86_399, timelineStartSeconds + timelineHours * 3600) }
     var videoTimelineRange: ClosedRange<Double>? { importedVideo?.timelineRange }
     var playbackRange: ClosedRange<Double> {
-        let ranges = [importedTimelineRange, videoTimelineRange].compactMap { $0 }
+        let ranges = [importedTimelineRange, routeTimelineRange, videoTimelineRange].compactMap { $0 }
         guard let lower = ranges.map(\.lowerBound).min(),
               let upper = ranges.map(\.upperBound).max() else { return 0 ... 86_399 }
         return lower ... upper
@@ -421,7 +457,6 @@ final class RouteLabModel {
 
     private func rebuildRoute() {
         route = RouteEngine.buildTimedRoute(roads: roads, marks: orderedMarks)
-        mapContentRevision += 1
     }
 
     func rebuildSnapPreview() {

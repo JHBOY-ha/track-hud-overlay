@@ -90,6 +90,24 @@ struct RouteEngineTests {
         #expect(!model.isPlaying)
     }
 
+    @Test @MainActor func generatedRouteShowsYellowCursorPositionOnTimeline() {
+        let model = RouteLabModel()
+        let start = Calendar.current.startOfDay(for: .now).addingTimeInterval(100)
+        model.route = RouteResult(
+            path: [GeoPoint(lat: 0, lon: 0), GeoPoint(lat: 0, lon: 0.01)],
+            samples: [
+                TimedRoutePoint(point: GeoPoint(lat: 0, lon: 0), time: start, progress: 0),
+                TimedRoutePoint(point: GeoPoint(lat: 0, lon: 0.01), time: start.addingTimeInterval(10), progress: 1),
+            ],
+            lengthM: 1_000,
+            disconnectedPair: nil
+        )
+        model.cursorSeconds = 105
+
+        #expect(model.routeTimelineRange == 100 ... 110)
+        #expect(abs((model.routeCursorPoint?.lon ?? 0) - 0.005) < 0.000001)
+    }
+
     @Test func parsesSharedOSMNodesForRouting() throws {
         let xml = """
         <osm version="0.6">
