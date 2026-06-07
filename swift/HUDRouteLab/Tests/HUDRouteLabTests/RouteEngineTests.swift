@@ -63,6 +63,24 @@ struct RouteEngineTests {
         #expect(model.timelineStartSeconds == 0)
     }
 
+    @Test @MainActor func timelineWheelPanAndAnchoredZoomStayWithinDay() {
+        let model = RouteLabModel()
+        model.timelineHours = 6
+        model.timelineStartSeconds = 6 * 3600
+
+        model.panTimeline(byVisibleFraction: 0.5)
+        #expect(model.timelineStartSeconds == 9 * 3600)
+
+        model.zoomTimeline(by: 0.5, anchorFraction: 0.5)
+        #expect(model.timelineHours == 3)
+        #expect(model.timelineStartSeconds == 10.5 * 3600)
+
+        model.zoomTimeline(by: 0.0001, anchorFraction: 0.5)
+        #expect(model.timelineHours == 1.0 / 60)
+        model.panTimeline(byVisibleFraction: -10_000)
+        #expect(model.timelineStartSeconds == 0)
+    }
+
     @Test @MainActor func playbackUsesImportedTrackRangeAndStopsAtEnd() {
         let model = RouteLabModel()
         let start = Calendar.current.startOfDay(for: .now).addingTimeInterval(100)
@@ -88,6 +106,33 @@ struct RouteEngineTests {
 
         #expect(model.cursorSeconds == 200)
         #expect(!model.isPlaying)
+    }
+
+    @Test @MainActor func shuttleControlsCycleForwardAndReversePlaybackRates() {
+        let model = RouteLabModel()
+        model.cursorSeconds = 1_000
+
+        model.shuttleForward()
+        #expect(model.playbackRate == 1)
+        model.shuttleForward()
+        #expect(model.playbackRate == 2)
+        model.shuttleForward()
+        #expect(model.playbackRate == 4)
+        model.shuttleForward()
+        #expect(model.playbackRate == 1)
+
+        model.shuttleReverse()
+        #expect(model.playbackRate == -1)
+        model.shuttleReverse()
+        #expect(model.playbackRate == -2)
+        model.advancePlayback(by: 10)
+        #expect(model.cursorSeconds == 980)
+
+        model.togglePlayback()
+        #expect(!model.isPlaying)
+        model.togglePlayback()
+        #expect(model.isPlaying)
+        #expect(model.playbackRate == -2)
     }
 
     @Test @MainActor func generatedRouteShowsYellowCursorPositionOnTimeline() {

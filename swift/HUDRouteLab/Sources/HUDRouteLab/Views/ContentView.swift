@@ -91,6 +91,13 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .exportRoute)) { _ in
             model.export()
         }
+        .background {
+            TransportKeyObserver(
+                onTogglePlayback: model.togglePlayback,
+                onReverse: model.shuttleReverse,
+                onForward: model.shuttleForward
+            )
+        }
     }
 
     private var mapEditor: some View {

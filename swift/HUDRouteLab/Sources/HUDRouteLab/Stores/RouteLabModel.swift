@@ -41,6 +41,8 @@ final class RouteLabModel {
     var showsVideoPreview = true
     var cursorSeconds = 8.0 * 60 * 60
     var isPlaying = false
+    var playbackRate = 1.0
+    private var lastPlaybackDirection = 1.0
     var timelineHours = 24.0
     var timelineStartSeconds = 0.0
     var selectedMarkID: Int?
@@ -348,20 +350,48 @@ final class RouteLabModel {
     }
 
     func setTimelineHours(_ hours: Double) {
-        timelineHours = hours
-        timelineStartSeconds = min(timelineStartSeconds, max(0, 86_400 - hours * 3600))
+        timelineHours = min(24, max(1.0 / 60, hours))
+        timelineStartSeconds = min(timelineStartSeconds, max(0, 86_400 - timelineHours * 3600))
         revealCursor()
+    }
+
+    func panTimeline(byVisibleFraction fraction: Double) {
+        let span = timelineHours * 3600
+        timelineStartSeconds = min(
+            max(0, timelineStartSeconds + span * fraction),
+            max(0, 86_400 - span)
+        )
+    }
+
+    func zoomTimeline(by factor: Double, anchorFraction: Double) {
+        let oldSpan = timelineHours * 3600
+        let anchor = timelineStartSeconds + oldSpan * min(1, max(0, anchorFraction))
+        let newSpan = min(86_400, max(60, oldSpan * factor))
+        timelineHours = newSpan / 3600
+        timelineStartSeconds = min(
+            max(0, anchor - newSpan * min(1, max(0, anchorFraction))),
+            max(0, 86_400 - newSpan)
+        )
     }
 
     func togglePlayback() {
         isPlaying ? pausePlayback() : play()
     }
 
-    func play() {
-        guard !isPlaying else { return }
+    func play(direction: Double? = nil, speed: Double? = nil) {
+        let direction = direction ?? lastPlaybackDirection
+        let speed = speed ?? abs(playbackRate)
+        playbackRate = (direction < 0 ? -1 : 1) * max(1, speed)
+        lastPlaybackDirection = playbackRate < 0 ? -1 : 1
+        guard !isPlaying else {
+            syncVideoPlayback()
+            return
+        }
         let range = playbackRange
-        if cursorSeconds < range.lowerBound || cursorSeconds >= range.upperBound {
-            cursorSeconds = range.lowerBound
+        if cursorSeconds < range.lowerBound || cursorSeconds > range.upperBound
+            || (playbackRate > 0 && cursorSeconds >= range.upperBound)
+            || (playbackRate < 0 && cursorSeconds <= range.lowerBound) {
+            cursorSeconds = playbackRate < 0 ? range.upperBound : range.lowerBound
             revealCursor()
         }
         isPlaying = true
@@ -381,6 +411,22 @@ final class RouteLabModel {
         }
     }
 
+    func shuttleReverse() {
+        let nextSpeed = isPlaying && playbackRate < 0 ? nextShuttleSpeed(abs(playbackRate)) : 1
+        play(direction: -1, speed: nextSpeed)
+    }
+
+    func shuttleForward() {
+        let nextSpeed = isPlaying && playbackRate > 0 ? nextShuttleSpeed(abs(playbackRate)) : 1
+        play(direction: 1, speed: nextSpeed)
+    }
+
+    private func nextShuttleSpeed(_ speed: Double) -> Double {
+        if speed < 2 { return 2 }
+        if speed < 4 { return 4 }
+        return 1
+    }
+
     func pausePlayback() {
         isPlaying = false
         videoPlayer?.pause()
@@ -396,11 +442,11 @@ final class RouteLabModel {
 
     func advancePlayback(by seconds: Double) {
         guard isPlaying else { return }
-        let end = playbackRange.upperBound
-        cursorSeconds = min(end, cursorSeconds + max(0, seconds))
+        let range = playbackRange
+        cursorSeconds = min(range.upperBound, max(range.lowerBound, cursorSeconds + max(0, seconds) * playbackRate))
         revealCursor()
         syncVideoPlayback()
-        if cursorSeconds >= end {
+        if cursorSeconds <= range.lowerBound || cursorSeconds >= range.upperBound {
             pausePlayback()
         }
     }
@@ -408,9 +454,12 @@ final class RouteLabModel {
     private func syncVideoPlayback() {
         guard let range = videoTimelineRange, let videoPlayer else { return }
         if range.contains(cursorSeconds) {
-            if videoPlayer.rate == 0 {
+            if playbackRate < 0 {
+                videoPlayer.pause()
                 seekVideo()
-                videoPlayer.play()
+            } else {
+                if videoPlayer.rate == 0 { seekVideo() }
+                videoPlayer.rate = Float(playbackRate)
             }
         } else {
             videoPlayer.pause()

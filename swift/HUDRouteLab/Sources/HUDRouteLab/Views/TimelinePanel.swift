@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 struct TimelinePanel: View {
@@ -19,13 +20,36 @@ struct TimelinePanel: View {
                 Text(model.cursorTime.formatted(date: .omitted, time: .standard))
                     .font(.body.monospacedDigit())
 
-                Button {
-                    model.togglePlayback()
-                } label: {
-                    Label(model.isPlaying ? "暂停" : "播放", systemImage: model.isPlaying ? "pause.fill" : "play.fill")
+                HStack(spacing: 4) {
+                    Button {
+                        model.shuttleReverse()
+                    } label: {
+                        Label("倒放", systemImage: "backward.fill")
+                    }
+                    .help("J：倒放；重复按 J 切换 1× / 2× / 4×")
+
+                    Button {
+                        model.togglePlayback()
+                    } label: {
+                        Label(model.isPlaying ? "暂停" : "播放", systemImage: model.isPlaying ? "pause.fill" : "play.fill")
+                    }
+                    .help("空格或 K：播放 / 暂停")
+
+                    Button {
+                        model.shuttleForward()
+                    } label: {
+                        Label("正放", systemImage: "forward.fill")
+                    }
+                    .help("L：正放；重复按 L 切换 1× / 2× / 4×")
+
+                    if model.isPlaying {
+                        Text("\(model.playbackRate < 0 ? "−" : "")\(Int(abs(model.playbackRate)))×")
+                            .font(.caption.monospacedDigit().weight(.semibold))
+                            .foregroundStyle(model.playbackRate < 0 ? .orange : .secondary)
+                            .frame(minWidth: 28)
+                    }
                 }
                 .buttonStyle(.borderless)
-                .keyboardShortcut(.space, modifiers: [])
 
                 if model.importedTrack != nil {
                     Label("轨迹位置", systemImage: "location.fill")
@@ -35,17 +59,13 @@ struct TimelinePanel: View {
 
                 Spacer()
 
-                Picker("时间轴缩放", selection: Binding(
-                    get: { model.timelineHours },
-                    set: { model.setTimelineHours($0) }
-                )) {
-                    ForEach([24.0, 12.0, 6.0, 3.0, 1.0], id: \.self) { hours in
-                        Text("\(Int(hours)) 小时").tag(hours)
-                    }
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text("\(clock(model.timelineStartSeconds)) – \(clock(model.timelineEndSeconds))")
+                        .font(.caption.monospacedDigit())
+                    Text("可见跨度 \(durationLabel(spanSeconds))")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                 }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(width: 300)
 
                 Button {
                     model.revealCursor()
@@ -62,24 +82,7 @@ struct TimelinePanel: View {
                 timelineTrack
                     .frame(height: 78)
                     .padding(.horizontal, 12)
-                    .padding(.top, 8)
-
-                HStack(spacing: 10) {
-                    Text(clock(model.timelineStartSeconds))
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 62, alignment: .leading)
-
-                    Slider(
-                        value: $model.timelineStartSeconds,
-                        in: 0 ... max(0.001, 86_400 - spanSeconds)
-                    )
-                    .disabled(model.timelineHours == 24)
-
-                    Text(clock(model.timelineEndSeconds))
-                        .font(.caption.monospacedDigit())
-                        .frame(width: 62, alignment: .trailing)
-                }
-                .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
                 .padding(.bottom, 8)
             }
         }
@@ -99,18 +102,26 @@ struct TimelinePanel: View {
                             .stroke(.separator.opacity(0.7), lineWidth: 1)
                     }
 
-                ForEach(0 ... tickCount, id: \.self) { index in
-                    let fraction = Double(index) / Double(tickCount)
-                    let x = width * fraction
-                    let seconds = model.timelineStartSeconds + spanSeconds * fraction
+                ForEach(minorTicks, id: \.self) { seconds in
+                    let x = xPosition(seconds, width: width)
                     Rectangle()
-                        .fill(.separator.opacity(0.55))
-                        .frame(width: 1, height: 34)
-                        .offset(x: x, y: 22)
-                    Text(clock(seconds, includeSeconds: false))
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                        .offset(x: min(max(2, x - 20), width - 42), y: 3)
+                        .fill(.separator.opacity(0.32))
+                        .frame(width: 1, height: 24)
+                        .offset(x: x, y: 30)
+                }
+
+                ForEach(majorTicks, id: \.self) { seconds in
+                    let x = xPosition(seconds, width: width)
+                    Rectangle()
+                        .fill(.primary.opacity(0.55))
+                        .frame(width: 1, height: 50)
+                        .offset(x: x, y: 18)
+                    Text(tickLabel(seconds))
+                        .font(.caption.monospacedDigit().weight(.medium))
+                        .foregroundStyle(.primary.opacity(0.82))
+                        .padding(.horizontal, 3)
+                        .background(.regularMaterial.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
+                        .offset(x: min(max(2, x - 30), width - 64), y: 2)
                 }
 
                 let cursorX = xPosition(model.cursorSeconds, width: width)
@@ -182,11 +193,43 @@ struct TimelinePanel: View {
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 model.scrubTimeline(to: seconds(at: value.location.x, width: width))
             })
+            .background {
+                TimelineScrollObserver { deltaFraction, zoomFactor, anchorFraction in
+                    if let zoomFactor {
+                        model.zoomTimeline(by: zoomFactor, anchorFraction: anchorFraction)
+                    } else {
+                        model.panTimeline(byVisibleFraction: deltaFraction)
+                    }
+                }
+            }
         }
     }
 
-    private var tickCount: Int {
-        max(2, min(12, Int(model.timelineHours)))
+    private var majorTickInterval: Double {
+        let target = spanSeconds / 8
+        return [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1_800, 3_600, 7_200, 10_800, 21_600]
+            .first(where: { $0 >= target }) ?? 43_200
+    }
+
+    private var majorTicks: [Double] {
+        tickValues(interval: majorTickInterval)
+    }
+
+    private var minorTicks: [Double] {
+        let majorSet = Set(majorTicks)
+        return tickValues(interval: majorTickInterval / 4).filter { !majorSet.contains($0) }
+    }
+
+    private func tickValues(interval: Double) -> [Double] {
+        guard interval > 0 else { return [] }
+        let first = ceil(model.timelineStartSeconds / interval) * interval
+        var values: [Double] = []
+        var value = first
+        while value <= model.timelineEndSeconds {
+            values.append(value)
+            value += interval
+        }
+        return values
     }
 
     private func isVisible(_ seconds: Double) -> Bool {
@@ -209,5 +252,76 @@ struct TimelinePanel: View {
         return includeSeconds
             ? String(format: "%02d:%02d:%02d", hour, minute, second)
             : String(format: "%02d:%02d", hour, minute)
+    }
+
+    private func tickLabel(_ seconds: Double) -> String {
+        clock(seconds, includeSeconds: majorTickInterval < 60)
+    }
+
+    private func durationLabel(_ seconds: Double) -> String {
+        if seconds >= 3_600 {
+            return String(format: seconds >= 36_000 ? "%.0f 小时" : "%.1f 小时", seconds / 3_600)
+        }
+        if seconds >= 60 {
+            return String(format: seconds >= 600 ? "%.0f 分钟" : "%.1f 分钟", seconds / 60)
+        }
+        return String(format: "%.0f 秒", seconds)
+    }
+}
+
+private struct TimelineScrollObserver: NSViewRepresentable {
+    var onScroll: (_ deltaFraction: Double, _ zoomFactor: Double?, _ anchorFraction: Double) -> Void
+
+    func makeNSView(context: Context) -> TimelineScrollNSView {
+        let view = TimelineScrollNSView()
+        view.onScroll = onScroll
+        return view
+    }
+
+    func updateNSView(_ view: TimelineScrollNSView, context: Context) {
+        view.onScroll = onScroll
+    }
+}
+
+private final class TimelineScrollNSView: NSView {
+    var onScroll: ((_ deltaFraction: Double, _ zoomFactor: Double?, _ anchorFraction: Double) -> Void)?
+    private var eventMonitor: Any?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            removeEventMonitor()
+        } else if eventMonitor == nil {
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                let location = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(location) else { return event }
+                self.handleScroll(event, location: location)
+                return nil
+            }
+        }
+    }
+
+    private func removeEventMonitor() {
+        if let eventMonitor {
+            NSEvent.removeMonitor(eventMonitor)
+            self.eventMonitor = nil
+        }
+    }
+
+    private func handleScroll(_ event: NSEvent, location: CGPoint) {
+        let anchor = bounds.width > 0 ? min(1, max(0, location.x / bounds.width)) : 0.5
+        if event.modifierFlags.contains(.option) {
+            let delta = abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
+                ? event.scrollingDeltaY
+                : event.scrollingDeltaX
+            onScroll?(0, exp(-delta * 0.025), anchor)
+        } else {
+            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+                ? event.scrollingDeltaX
+                : event.scrollingDeltaY
+            let divisor = event.hasPreciseScrollingDeltas ? max(1, bounds.width) : 25
+            onScroll?(-delta / divisor, nil, anchor)
+        }
     }
 }
