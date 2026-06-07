@@ -7,6 +7,7 @@
 npm run dev
 
 # HUD Route Lab：http://127.0.0.1:5174/route-lab.html
+# 完整路线编辑器请自行编译 swift/HUDRouteLab
 npm run dev:route-lab
 ```
 
@@ -326,31 +327,31 @@ node scripts/export-frames.mjs \
 /?telemetry=/samples/telemetry.csv&track=/samples/track.gpx&player=ANNA&unit=kmh&t=64800
 ```
 
-| 参数                | 说明                                             |
-| ------------------- | ------------------------------------------------ |
-| `telemetry`         | 遥测文件 URL                                     |
-| `track`             | GPX 或 GeoJSON 文件 URL                          |
-| `player`            | 玩家名称                                         |
-| `unit`              | `kmh` 或 `mph`                                   |
-| `coord`             | 轨迹原始坐标系：`wgs84`、`gcj02` 或 `bd09`       |
-| `t`                 | 初始时间，本地当天零点后的秒数                   |
-| `rangeStart`        | 选区起点，本地当天零点后的秒数                   |
-| `rangeEnd`          | 选区终点，本地当天零点后的秒数                   |
-| `progressStart`     | HUD 进度起点，本地当天零点后的秒数               |
-| `progressEnd`       | HUD 进度终点，本地当天零点后的秒数               |
-| `telemetryOffset`   | CSV 轨道 offset，单位秒                          |
-| `trackOffset`       | GPX / GeoJSON 轨道 offset，单位秒                |
-| `videoOffset`       | 视频第 0 帧所在的时间轴位置，单位秒              |
-| `snapToRoads`       | 路网吸附开关，`1` 或 `0`                         |
-| `snapMaxDistM`      | 吸附最大距离，米                                 |
-| `minimapViewRadiusM`| Minimap 可视半径，米                             |
-| `minimapTiltDeg`    | Minimap 俯视角，度                               |
-| `minimapStrokeWidth`| Minimap 道路线宽，px                             |
-| `hudShake`          | HUD 抖动开关，`1` 或 `0`                         |
-| `hudShakeIntensity` | HUD 抖动强度，`0`–`8`                            |
-| `hudCurvature`      | 头盔曲面开关，`1` 或 `0`                         |
-| `hudCurvatureIntensity` | 头盔曲面强度，`0`–`3`                        |
-| `exporter=1`        | 开启透明导出模式，隐藏控制栏                     |
+| 参数                      | 说明                                             |
+| ------------------------- | ------------------------------------------------ |
+| `telemetry`             | 遥测文件 URL                                     |
+| `track`                 | GPX 或 GeoJSON 文件 URL                          |
+| `player`                | 玩家名称                                         |
+| `unit`                  | `kmh` 或 `mph`                               |
+| `coord`                 | 轨迹原始坐标系：`wgs84`、`gcj02` 或 `bd09` |
+| `t`                     | 初始时间，本地当天零点后的秒数                   |
+| `rangeStart`            | 选区起点，本地当天零点后的秒数                   |
+| `rangeEnd`              | 选区终点，本地当天零点后的秒数                   |
+| `progressStart`         | HUD 进度起点，本地当天零点后的秒数               |
+| `progressEnd`           | HUD 进度终点，本地当天零点后的秒数               |
+| `telemetryOffset`       | CSV 轨道 offset，单位秒                          |
+| `trackOffset`           | GPX / GeoJSON 轨道 offset，单位秒                |
+| `videoOffset`           | 视频第 0 帧所在的时间轴位置，单位秒              |
+| `snapToRoads`           | 路网吸附开关，`1` 或 `0`                     |
+| `snapMaxDistM`          | 吸附最大距离，米                                 |
+| `minimapViewRadiusM`    | Minimap 可视半径，米                             |
+| `minimapTiltDeg`        | Minimap 俯视角，度                               |
+| `minimapStrokeWidth`    | Minimap 道路线宽，px                             |
+| `hudShake`              | HUD 抖动开关，`1` 或 `0`                     |
+| `hudShakeIntensity`     | HUD 抖动强度，`0`–`8`                       |
+| `hudCurvature`          | 头盔曲面开关，`1` 或 `0`                     |
+| `hudCurvatureIntensity` | 头盔曲面强度，`0`–`3`                       |
+| `exporter=1`            | 开启透明导出模式，隐藏控制栏                     |
 
 ## 布局编辑
 
@@ -418,6 +419,7 @@ public/samples/           # 示例 telemetry 和 track
 design-ref/               # 视觉参考图
 swift/                    # 原生 macOS Swift 移植（详见 swift/README.md）
 ```
+
 ## 技术栈
 
 - React 18
