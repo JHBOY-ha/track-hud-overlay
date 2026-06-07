@@ -9,53 +9,33 @@ struct TimelinePanel: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Button {
                     withAnimation(.snappy) { isExpanded.toggle() }
                 } label: {
-                    Label("时间轴", systemImage: isExpanded ? "chevron.down" : "chevron.right")
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .frame(width: 16, height: 16)
                 }
                 .buttonStyle(.plain)
+                .help(isExpanded ? "收起时间轴" : "展开时间轴")
 
-                Text(model.cursorTime.formatted(date: .omitted, time: .standard))
-                    .font(.body.monospacedDigit())
-
-                HStack(spacing: 4) {
-                    Button {
-                        model.shuttleReverse()
-                    } label: {
-                        Label("倒放", systemImage: "backward.fill")
-                    }
-                    .help("J：倒放；重复按 J 切换 1× / 2× / 4×")
-
-                    Button {
-                        model.togglePlayback()
-                    } label: {
-                        Label(model.isPlaying ? "暂停" : "播放", systemImage: model.isPlaying ? "pause.fill" : "play.fill")
-                    }
-                    .help("空格或 K：播放 / 暂停")
-
-                    Button {
-                        model.shuttleForward()
-                    } label: {
-                        Label("正放", systemImage: "forward.fill")
-                    }
-                    .help("L：正放；重复按 L 切换 1× / 2× / 4×")
-
-                    if model.isPlaying {
-                        Text("\(model.playbackRate < 0 ? "−" : "")\(Int(abs(model.playbackRate)))×")
-                            .font(.caption.monospacedDigit().weight(.semibold))
-                            .foregroundStyle(model.playbackRate < 0 ? .orange : .secondary)
-                            .frame(minWidth: 28)
-                    }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("时间轴")
+                        .font(.headline)
+                    Text(model.cursorTime.formatted(date: .omitted, time: .standard))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderless)
 
                 if model.importedTrack != nil {
-                    Label("轨迹位置", systemImage: "location.fill")
-                        .font(.caption)
+                    Image(systemName: "location.fill")
                         .foregroundStyle(.blue)
+                        .help("正在预览导入轨迹的位置")
                 }
+
+                Spacer()
+
+                transportControls
 
                 Spacer()
 
@@ -70,11 +50,13 @@ struct TimelinePanel: View {
                 Button {
                     model.revealCursor()
                 } label: {
-                    Label("定位当前时间", systemImage: "scope")
+                    Image(systemName: "scope")
+                        .frame(width: 16, height: 16)
                 }
+                .help("定位当前时间")
             }
             .padding(.horizontal, 12)
-            .frame(height: 42)
+            .frame(height: 48)
 
             if isExpanded {
                 Divider()
@@ -87,6 +69,59 @@ struct TimelinePanel: View {
             }
         }
         .background(.regularMaterial)
+    }
+
+    private var transportControls: some View {
+        HStack(spacing: 8) {
+            ControlGroup {
+                Button {
+                    model.shuttleReverse()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .frame(width: 22)
+                }
+                .accessibilityLabel("倒放")
+                .help("J：倒放；重复按 J 切换 1× / 2× / 4×")
+
+                Button {
+                    model.togglePlayback()
+                } label: {
+                    Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                        .frame(width: 22)
+                }
+                .accessibilityLabel(model.isPlaying ? "暂停" : "播放")
+                .help("空格或 K：播放 / 暂停")
+
+                Button {
+                    model.shuttleForward()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .frame(width: 22)
+                }
+                .accessibilityLabel("正放")
+                .help("L：正放；重复按 L 切换 1× / 2× / 4×")
+            }
+            .controlSize(.small)
+            .fixedSize()
+
+            Text(playbackStatus)
+                .font(.caption.monospacedDigit().weight(.semibold))
+                .foregroundStyle(playbackStatusColor)
+                .frame(width: 38)
+                .padding(.vertical, 3)
+                .background(.quaternary, in: Capsule())
+                .accessibilityLabel("播放速度 \(playbackStatus)")
+        }
+    }
+
+    private var playbackStatus: String {
+        guard model.isPlaying else { return "暂停" }
+        return "\(model.playbackRate < 0 ? "−" : "")\(Int(abs(model.playbackRate)))×"
+    }
+
+    private var playbackStatusColor: Color {
+        guard model.isPlaying else { return .secondary }
+        return model.playbackRate < 0 ? .orange : .accentColor
     }
 
     private var timelineTrack: some View {
