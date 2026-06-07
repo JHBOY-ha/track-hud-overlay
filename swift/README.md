@@ -24,7 +24,7 @@ swift run hud5-export --track ../../local/some.gpx --out out.mov --fps 60 --dura
 # 预览 App（编译 + 启动；正式 UI 开发请用 Xcode）
 cd HUD5App && swift build && swift run
 
-# 路线编辑器
+# 路线编辑器（或直接下载预构建版本：GitHub Releases）
 cd HUDRouteLab && ./script/build_and_run.sh
 ```
 
@@ -74,6 +74,8 @@ Xcode 提供 SwiftUI Previews、View Debugger（检查 CALayer/HUD 几何）和 
 - [ ] 编辑模式：可拖拽布局 + 高级设置，持久化到 UserDefaults
 
 ### HUDRouteLab（路线编辑）— 活跃开发中
+
+> **下载：** 预构建版本可在 [GitHub Releases](https://github.com/JHBOY-ha/track-hud-overlay/releases) 中下载 `.app`，无需编译。
 
 - [X] 基于 MapKit 的路线编辑器，支持交互式航点编辑
 - [X] OSM 路网获取 + Dijkstra 寻路路网吸附
