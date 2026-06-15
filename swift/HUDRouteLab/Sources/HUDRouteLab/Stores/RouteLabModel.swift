@@ -15,11 +15,24 @@ final class RouteLabModel {
         didSet {
             importedCoordinates = importedTrack?.coordinates ?? []
             importedTimelineSeconds = importedTrack?.timelineSeconds ?? []
+            if let first = importedTimelineSeconds.first,
+               let last = importedTimelineSeconds.last, last > first {
+                geoPlacement = ClipPlacement(
+                    start: first, inset: 0, length: last - first, sourceDuration: last - first
+                )
+            } else {
+                geoPlacement = nil
+            }
             mapContentRevision += 1
         }
     }
     private(set) var importedCoordinates: [GeoPoint] = []
     private var importedTimelineSeconds: [Double] = []
+    /// Editable timeline placement for the imported GEO track / VIDEO clip.
+    private(set) var geoPlacement: ClipPlacement?
+    private(set) var videoPlacement: ClipPlacement?
+    @ObservationIgnored private var geoDragOrigin: ClipPlacement?
+    @ObservationIgnored private var videoDragOrigin: ClipPlacement?
     var snapPreview: SnapPreview = .empty
     var snapDistanceM = 30.0 {
         didSet { rebuildSnapPreview() }
@@ -56,23 +69,26 @@ final class RouteLabModel {
     private var playbackTask: Task<Void, Never>?
 
     var center: GeoPoint { GeoPoint(lat: latitude, lon: longitude) }
-    var importedTimelineRange: ClosedRange<Double>? {
-        guard let first = importedTimelineSeconds.first, let last = importedTimelineSeconds.last else { return nil }
-        return first ... last
+    var importedTimelineRange: ClosedRange<Double>? { geoPlacement?.range }
+    /// Map the global cursor second to the GEO track's intrinsic time, honoring placement.
+    private var geoIntrinsicCursor: Double? {
+        guard let placement = geoPlacement, placement.range.contains(cursorSeconds),
+              let base = importedTimelineSeconds.first else { return nil }
+        return base + placement.sourceSeconds(forTimeline: cursorSeconds)
     }
     var importedCursorPoint: GeoPoint? {
-        guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
+        guard let intrinsic = geoIntrinsicCursor else { return nil }
         return importedTrack?.point(
-            at: cursorSeconds,
+            at: intrinsic,
             coordinates: importedCoordinates,
             timelineSeconds: importedTimelineSeconds
         )
     }
     var snappedCursorPoint: GeoPoint? {
-        guard importedTimelineRange?.contains(cursorSeconds) == true else { return nil }
+        guard let intrinsic = geoIntrinsicCursor else { return nil }
         guard snapPreview.points.count == importedTrack?.points.count else { return nil }
         return importedTrack?.point(
-            at: cursorSeconds,
+            at: intrinsic,
             coordinates: snapPreview.points,
             timelineSeconds: importedTimelineSeconds
         )
@@ -124,7 +140,7 @@ final class RouteLabModel {
         Calendar.current.startOfDay(for: .now).addingTimeInterval(cursorSeconds)
     }
     var timelineEndSeconds: Double { min(86_399, timelineStartSeconds + timelineHours * 3600) }
-    var videoTimelineRange: ClosedRange<Double>? { importedVideo?.timelineRange }
+    var videoTimelineRange: ClosedRange<Double>? { videoPlacement?.range }
     var playbackRange: ClosedRange<Double> {
         let ranges = [importedTimelineRange, routeTimelineRange, videoTimelineRange].compactMap { $0 }
         guard let lower = ranges.map(\.lowerBound).min(),
@@ -236,7 +252,14 @@ final class RouteLabModel {
                 videoPlayer = AVPlayer(url: video.url)
                 videoPlayer?.actionAtItemEnd = .pause
                 importedVideo = video
-                cursorSeconds = video.startSeconds
+                let start = min(86_399, max(0, video.startSeconds))
+                videoPlacement = ClipPlacement(
+                    start: start,
+                    inset: 0,
+                    length: min(video.duration, ClipPlacement.timelineMax - start),
+                    sourceDuration: video.duration
+                )
+                cursorSeconds = start
                 showsVideoPreview = true
                 revealCursor()
                 seekVideo()
@@ -256,6 +279,8 @@ final class RouteLabModel {
         pausePlayback()
         videoPlayer = nil
         importedVideo = nil
+        videoPlacement = nil
+        videoDragOrigin = nil
         status = "已移除导入视频。"
     }
 
@@ -489,8 +514,8 @@ final class RouteLabModel {
     }
 
     private func seekVideo() {
-        guard let video = importedVideo, let videoPlayer else { return }
-        let seconds = min(video.duration, max(0, cursorSeconds - video.startSeconds))
+        guard let videoPlayer, let placement = videoPlacement else { return }
+        let seconds = placement.sourceSeconds(forTimeline: cursorSeconds)
         videoPlayer.seek(
             to: CMTime(seconds: seconds, preferredTimescale: 600),
             toleranceBefore: .zero,
@@ -548,6 +573,42 @@ final class RouteLabModel {
         }.value
         snapPreview = preview
         mapContentRevision += 1
+    }
+
+    // MARK: - Timeline clip editing (drag / trim)
+
+    func beginClipDrag(_ kind: TimelineClipKind) {
+        pausePlayback()
+        switch kind {
+        case .video: videoDragOrigin = videoPlacement
+        case .geo: geoDragOrigin = geoPlacement
+        }
+    }
+
+    /// Apply a drag relative to the placement captured at gesture start. `deltaSeconds`
+    /// is the total translation since the drag began (not incremental).
+    func updateClipDrag(_ kind: TimelineClipKind, mode: ClipDragMode, deltaSeconds: Double) {
+        switch kind {
+        case .video:
+            guard let origin = videoDragOrigin else { return }
+            videoPlacement = origin.applying(mode: mode, delta: deltaSeconds)
+            seekVideo()
+        case .geo:
+            guard let origin = geoDragOrigin else { return }
+            geoPlacement = origin.applying(mode: mode, delta: deltaSeconds)
+            mapContentRevision += 1
+        }
+    }
+
+    func endClipDrag(_ kind: TimelineClipKind) {
+        switch kind {
+        case .video:
+            videoDragOrigin = nil
+            seekVideo()
+        case .geo:
+            geoDragOrigin = nil
+            mapContentRevision += 1
+        }
     }
 
     func export() {

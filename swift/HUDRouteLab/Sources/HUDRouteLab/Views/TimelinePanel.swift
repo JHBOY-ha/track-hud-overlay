@@ -62,7 +62,7 @@ struct TimelinePanel: View {
                 Divider()
 
                 timelineTrack
-                    .frame(height: 78)
+                    .frame(height: 108)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                 .padding(.bottom, 8)
@@ -141,63 +141,29 @@ struct TimelinePanel: View {
                     let x = xPosition(seconds, width: width)
                     Rectangle()
                         .fill(.separator.opacity(0.32))
-                        .frame(width: 1, height: 24)
-                        .offset(x: x, y: 30)
+                        .frame(width: 1, height: 16)
+                        .offset(x: x, y: 24)
                 }
 
                 ForEach(majorTicks, id: \.self) { seconds in
                     let x = xPosition(seconds, width: width)
                     Rectangle()
                         .fill(.primary.opacity(0.55))
-                        .frame(width: 1, height: 50)
-                        .offset(x: x, y: 18)
+                        .frame(width: 1, height: 30)
+                        .offset(x: x, y: 16)
                     Text(tickLabel(seconds))
                         .font(.caption.monospacedDigit().weight(.medium))
                         .foregroundStyle(.primary.opacity(0.82))
                         .padding(.horizontal, 3)
                         .background(.regularMaterial.opacity(0.75), in: RoundedRectangle(cornerRadius: 3))
-                        .offset(x: min(max(2, x - 30), width - 64), y: 2)
+                        .offset(x: min(max(2, x - 30), width - 64), y: 1)
                 }
 
                 let cursorX = xPosition(model.cursorSeconds, width: width)
                 Rectangle()
                     .fill(Color.accentColor)
-                    .frame(width: 2, height: 50)
-                    .offset(x: cursorX, y: 12)
-
-                if let range = model.importedTimelineRange,
-                   range.upperBound >= model.timelineStartSeconds,
-                   range.lowerBound <= model.timelineStartSeconds + spanSeconds {
-                    let startX = xPosition(range.lowerBound, width: width)
-                    let endX = xPosition(range.upperBound, width: width)
-                    Capsule()
-                        .fill(Color.blue.opacity(0.72))
-                        .frame(width: max(3, endX - startX), height: 7)
-                        .offset(x: startX, y: 48)
-                    if range.contains(model.cursorSeconds) {
-                        Circle()
-                            .fill(Color.blue)
-                            .frame(width: 9, height: 9)
-                            .offset(x: cursorX - 4.5, y: 47)
-                    }
-                }
-
-                if let range = model.videoTimelineRange,
-                   range.upperBound >= model.timelineStartSeconds,
-                   range.lowerBound <= model.timelineStartSeconds + spanSeconds {
-                    let startX = xPosition(range.lowerBound, width: width)
-                    let endX = xPosition(range.upperBound, width: width)
-                    Capsule()
-                        .fill(Color.purple.opacity(0.78))
-                        .frame(width: max(3, endX - startX), height: 8)
-                        .overlay(alignment: .leading) {
-                            Text("VIDEO")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundStyle(.white)
-                                .padding(.leading, 5)
-                        }
-                        .offset(x: startX, y: 61)
-                }
+                    .frame(width: 2, height: 90)
+                    .offset(x: cursorX, y: 14)
 
                 ForEach(Array(ordered.enumerated()), id: \.element.id) { index, mark in
                     if isVisible(model.secondsForMark(mark.id)) {
@@ -209,7 +175,7 @@ struct TimelinePanel: View {
                                 .fill(model.selectedMarkID == mark.id ? Color.green : Color.orange)
                                 .frame(width: 10, height: 10)
                         }
-                        .offset(x: x - 10, y: 30)
+                        .offset(x: x - 10, y: 28)
                         .highPriorityGesture(
                             DragGesture(minimumDistance: 0)
                                 .onChanged { value in
@@ -226,7 +192,26 @@ struct TimelinePanel: View {
                         )
                     }
                 }
+
+                if let placement = model.geoPlacement {
+                    TimelineClipLane(
+                        model: model, kind: .geo, placement: placement,
+                        label: "GEO", color: .blue, width: width,
+                        windowStart: model.timelineStartSeconds, spanSeconds: spanSeconds, height: 20
+                    )
+                    .offset(y: 56)
+                }
+
+                if let placement = model.videoPlacement {
+                    TimelineClipLane(
+                        model: model, kind: .video, placement: placement,
+                        label: "VIDEO", color: .purple, width: width,
+                        windowStart: model.timelineStartSeconds, spanSeconds: spanSeconds, height: 20
+                    )
+                    .offset(y: 80)
+                }
             }
+            .coordinateSpace(name: "timelineTrack")
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
                 model.scrubTimeline(to: seconds(at: value.location.x, width: width))
@@ -304,6 +289,104 @@ struct TimelinePanel: View {
             return String(format: seconds >= 600 ? "%.0f 分钟" : "%.1f 分钟", seconds / 60)
         }
         return String(format: "%.0f 秒", seconds)
+    }
+}
+
+/// A draggable / trimmable clip on the timeline (VIDEO or GEO), with NLE-style edges.
+private struct TimelineClipLane: View {
+    let model: RouteLabModel
+    let kind: TimelineClipKind
+    let placement: ClipPlacement
+    let label: String
+    let color: Color
+    let width: Double
+    let windowStart: Double
+    let spanSeconds: Double
+    let height: Double
+
+    @State private var dragMode: ClipDragMode?
+
+    private let handleWidth: Double = 9
+    private var pps: Double { width / max(1, spanSeconds) }
+    private func x(_ seconds: Double) -> Double { (seconds - windowStart) * pps }
+    private func deltaSeconds(_ translationWidth: Double) -> Double { translationWidth / pps }
+
+    var body: some View {
+        let rawStart = x(placement.start)
+        let rawEnd = x(placement.end)
+        let visibleStart = min(max(0, rawStart), width)
+        let visibleEnd = min(max(0, rawEnd), width)
+        let barWidth = max(2, visibleEnd - visibleStart)
+        let headOnScreen = rawStart >= -1 && rawStart <= width + 1
+        let tailOnScreen = rawEnd >= -1 && rawEnd <= width + 1
+
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 4)
+                .fill(color.opacity(dragMode == nil ? 0.82 : 0.95))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(.white.opacity(0.35), lineWidth: 1)
+                }
+                .overlay(alignment: .leading) {
+                    Text(label)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                        .padding(.leading, headOnScreen ? handleWidth + 3 : 5)
+                }
+                .frame(width: barWidth, height: height)
+                .offset(x: visibleStart)
+                .help(rangeHelp)
+                .highPriorityGesture(drag(.move))
+
+            if headOnScreen {
+                trimHandle(.trimHead).offset(x: visibleStart)
+            }
+            if tailOnScreen {
+                trimHandle(.trimTail).offset(x: visibleEnd - handleWidth)
+            }
+        }
+        .frame(width: width, height: height, alignment: .topLeading)
+    }
+
+    private func trimHandle(_ mode: ClipDragMode) -> some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(.white.opacity(0.9))
+            .frame(width: handleWidth, height: height)
+            .overlay {
+                RoundedRectangle(cornerRadius: 1)
+                    .fill(color)
+                    .frame(width: 2, height: height * 0.45)
+            }
+            .contentShape(Rectangle())
+            .onHover { inside in
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            .highPriorityGesture(drag(mode))
+    }
+
+    private func drag(_ mode: ClipDragMode) -> some Gesture {
+        DragGesture(minimumDistance: 1, coordinateSpace: .named("timelineTrack"))
+            .onChanged { value in
+                if dragMode == nil {
+                    dragMode = mode
+                    model.beginClipDrag(kind)
+                }
+                model.updateClipDrag(kind, mode: mode, deltaSeconds: deltaSeconds(value.translation.width))
+            }
+            .onEnded { _ in
+                model.endClipDrag(kind)
+                dragMode = nil
+            }
+    }
+
+    private var rangeHelp: String {
+        "\(label)  \(clock(placement.start)) – \(clock(placement.end))  (\(String(format: "%.1f", placement.length)) s)"
+    }
+
+    private func clock(_ seconds: Double) -> String {
+        let value = max(0, min(86_399, Int(seconds.rounded())))
+        return String(format: "%02d:%02d:%02d", value / 3600, value % 3600 / 60, value % 60)
     }
 }
 

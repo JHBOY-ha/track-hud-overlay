@@ -91,6 +91,73 @@ struct EmbeddedVideoTimecode: Equatable, Sendable {
     var frameCount: Int32
 }
 
+/// Placement of a timeline clip (VIDEO / GEO) using non-linear-editor semantics.
+/// `start` is the global timeline second of the clip's in-point; `inset` is how far
+/// into the source content the in-point sits; `length` is the active span on the
+/// timeline; `sourceDuration` is the full length of the underlying source.
+struct ClipPlacement: Equatable, Sendable {
+    var start: Double
+    var inset: Double
+    var length: Double
+    var sourceDuration: Double
+
+    static let minLength = 0.5
+    static let timelineMax = 86_400.0
+
+    var end: Double { start + length }
+    var range: ClosedRange<Double> { start ... (start + length) }
+
+    /// Map a global timeline second to a source-content second (clamped to the source).
+    func sourceSeconds(forTimeline seconds: Double) -> Double {
+        min(sourceDuration, max(0, inset + (seconds - start)))
+    }
+
+    /// Slide the whole clip so its in-point lands on `newStart` (content unchanged).
+    func moved(toStart newStart: Double) -> ClipPlacement {
+        var copy = self
+        copy.start = min(max(0, newStart), Self.timelineMax - length)
+        return copy
+    }
+
+    /// Trim the head by `delta` seconds (positive shortens). The remaining content
+    /// stays anchored in place, so `start` and `inset` move together.
+    func trimmedHead(byDelta delta: Double) -> ClipPlacement {
+        var copy = self
+        let clamped = min(max(delta, max(-start, -inset)), length - Self.minLength)
+        copy.start += clamped
+        copy.inset += clamped
+        copy.length -= clamped
+        return copy
+    }
+
+    /// Trim the tail by `delta` seconds (positive lengthens), bounded by the source.
+    func trimmedTail(byDelta delta: Double) -> ClipPlacement {
+        var copy = self
+        let maxLength = min(sourceDuration - inset, Self.timelineMax - start)
+        copy.length = min(max(length + delta, Self.minLength), maxLength)
+        return copy
+    }
+
+    func applying(mode: ClipDragMode, delta: Double) -> ClipPlacement {
+        switch mode {
+        case .move: moved(toStart: start + delta)
+        case .trimHead: trimmedHead(byDelta: delta)
+        case .trimTail: trimmedTail(byDelta: delta)
+        }
+    }
+}
+
+enum TimelineClipKind: Equatable, Sendable {
+    case video
+    case geo
+}
+
+enum ClipDragMode: Equatable, Sendable {
+    case move
+    case trimHead
+    case trimTail
+}
+
 struct SnapPreview: Equatable, Sendable {
     var points: [GeoPoint]
     var snappedCount: Int
