@@ -218,6 +218,10 @@ interface PlaybackState {
    *  null on either side falls back to telemetry sample.progress + raw time. */
   progressStart: number | null;
   progressEnd: number | null;
+  /** Percentage values mapped to the start/end markers. Default 0 and 100,
+   *  but settable to any value so a clip can read e.g. 30%→85% of a stage. */
+  progressStartPct: number;
+  progressEndPct: number;
   /** Legacy export-duration override (kept for export pipeline). null = use
    *  effective selection length. */
   projectDuration: number | null;
@@ -260,6 +264,8 @@ interface PlaybackState {
   setSelection(start: number | null, end: number | null): void;
   setProgressStart(t: number | null): void;
   setProgressEnd(t: number | null): void;
+  setProgressStartPct(p: number): void;
+  setProgressEndPct(p: number): void;
   clearProgressRange(): void;
   clearVideo(): void;
   setSourceTrim(source: SourceKey, start: number, end: number): void;
@@ -302,6 +308,8 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   playbackEnd: null,
   progressStart: null,
   progressEnd: null,
+  progressStartPct: 0,
+  progressEndPct: 100,
   projectDuration: null,
 
   setPreviewAspect: a => set({ previewAspect: a }),
@@ -402,7 +410,10 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     if (t !== null && start !== null && start > t) start = null;
     set({ progressEnd: t, progressStart: start });
   },
-  clearProgressRange: () => set({ progressStart: null, progressEnd: null }),
+  setProgressStartPct: p => set({ progressStartPct: clampN(p, 0, 100) }),
+  setProgressEndPct: p => set({ progressEndPct: clampN(p, 0, 100) }),
+  clearProgressRange: () =>
+    set({ progressStart: null, progressEnd: null, progressStartPct: 0, progressEndPct: 100 }),
   setSelection: (start, end) => {
     if (start !== null && end !== null && end < start) [start, end] = [end, start];
     set({ playbackStart: start, playbackEnd: end });

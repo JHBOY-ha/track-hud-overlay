@@ -149,6 +149,8 @@ export function App() {
     const rangeEnd = Number(q.get('rangeEnd'));
     const progressStart = Number(q.get('progressStart'));
     const progressEnd = Number(q.get('progressEnd'));
+    const progressStartPct = q.get('progressStartPct');
+    const progressEndPct = q.get('progressEndPct');
     const telemetryOffset = Number(q.get('telemetryOffset') ?? '0');
     const trackOffset = Number(q.get('trackOffset') ?? '0');
     const videoOffset = Number(q.get('videoOffset') ?? '0');
@@ -242,6 +244,12 @@ export function App() {
         if (Number.isFinite(progressStart) && Number.isFinite(progressEnd) && progressEnd > progressStart) {
           usePlayback.getState().setProgressStart(progressStart);
           usePlayback.getState().setProgressEnd(progressEnd);
+          if (progressStartPct !== null && Number.isFinite(Number(progressStartPct))) {
+            usePlayback.getState().setProgressStartPct(Number(progressStartPct));
+          }
+          if (progressEndPct !== null && Number.isFinite(Number(progressEndPct))) {
+            usePlayback.getState().setProgressEndPct(Number(progressEndPct));
+          }
         }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
       } catch (e) {
@@ -907,6 +915,8 @@ function ExportSettingsPanel({
   const videoOffset = usePlayback(s => s.videoOffset);
   const progressStart = usePlayback(s => s.progressStart);
   const progressEnd = usePlayback(s => s.progressEnd);
+  const progressStartPct = usePlayback(s => s.progressStartPct);
+  const progressEndPct = usePlayback(s => s.progressEndPct);
   const [rangeStart, rangeEnd] = usePlayback(s => effectiveRange(s));
   const duration = Math.max(0, rangeEnd - rangeStart);
   const rangeStartFrame = secondsToFrame(rangeStart, fps);
@@ -986,7 +996,12 @@ function ExportSettingsPanel({
       '--hud-curvature', hudCurvatureEnabled ? '1' : '0',
       '--hud-curvature-intensity', String(hudCurvatureIntensity),
       ...(progressStart !== null && progressEnd !== null && progressEnd > progressStart
-        ? ['--progress-start', String(progressStart), '--progress-end', String(progressEnd)]
+        ? [
+            '--progress-start', String(progressStart),
+            '--progress-end', String(progressEnd),
+            '--progress-start-pct', String(progressStartPct),
+            '--progress-end-pct', String(progressEndPct),
+          ]
         : []),
       '--out', outPath,
     ];
@@ -1020,6 +1035,8 @@ function ExportSettingsPanel({
     hudCurvatureIntensity,
     progressStart,
     progressEnd,
+    progressStartPct,
+    progressEndPct,
     outPath,
   ]);
 

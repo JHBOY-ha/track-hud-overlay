@@ -59,6 +59,8 @@ export function Timeline() {
   const exporterMode = usePlayback(s => s.exporterMode);
   const progressStart = usePlayback(s => s.progressStart);
   const progressEnd = usePlayback(s => s.progressEnd);
+  const progressStartPct = usePlayback(s => s.progressStartPct);
+  const progressEndPct = usePlayback(s => s.progressEndPct);
 
   const telemetryOffset = usePlayback(s => s.telemetryOffset);
   const trackOffset = usePlayback(s => s.trackOffset);
@@ -565,10 +567,30 @@ export function Timeline() {
             fontFamily: 'inherit',
             fontSize: 12,
           }}
-          title="将当前时间设为左上角进度条起点（0%）"
+          title="将当前时间设为左上角进度条起点"
         >
           进度起点
         </button>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={progressStartPct}
+          disabled={progressStart === null}
+          onChange={e => usePlayback.getState().setProgressStartPct(Number(e.target.value))}
+          style={{
+            width: 48,
+            padding: '4px 6px',
+            background: '#222',
+            color: '#9ad6ff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="进度起点对应的百分比"
+        />
+        <span style={{ color: '#9ad6ff', fontSize: 11 }}>%</span>
         <button
           onClick={() => usePlayback.getState().setProgressEnd(usePlayback.getState().currentTime)}
           disabled={!hasAnyData}
@@ -582,10 +604,30 @@ export function Timeline() {
             fontFamily: 'inherit',
             fontSize: 12,
           }}
-          title="将当前时间设为左上角进度条终点（100%）"
+          title="将当前时间设为左上角进度条终点"
         >
           进度终点
         </button>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          value={progressEndPct}
+          disabled={progressEnd === null}
+          onChange={e => usePlayback.getState().setProgressEndPct(Number(e.target.value))}
+          style={{
+            width: 48,
+            padding: '4px 6px',
+            background: '#222',
+            color: '#9ad6ff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="进度终点对应的百分比"
+        />
+        <span style={{ color: '#9ad6ff', fontSize: 11 }}>%</span>
         <button
           onClick={() => usePlayback.getState().clearProgressRange()}
           disabled={progressStart === null && progressEnd === null}
@@ -770,7 +812,7 @@ export function Timeline() {
             }}
             title="进度起点"
           >
-            <div style={{ position: 'absolute', top: 0, left: 0, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>0%</div>
+            <div style={{ position: 'absolute', top: 0, left: 0, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>{progressStartPct}%</div>
           </div>
         )}
         {pxPerSec > 0 && progressEnd !== null && (
@@ -786,7 +828,7 @@ export function Timeline() {
             }}
             title="进度终点"
           >
-            <div style={{ position: 'absolute', top: 0, left: -22, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>100%</div>
+            <div style={{ position: 'absolute', top: 0, left: -28, fontSize: 9, color: '#9ad6ff', padding: '0 2px', background: '#101010' }}>{progressEndPct}%</div>
           </div>
         )}
 

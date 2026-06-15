@@ -43,6 +43,8 @@ const TICKS = 10;
 export function TopLeftStatus({ sample, currentTime, trackProgress }: Props) {
   const progressStart = usePlayback(s => s.progressStart);
   const progressEnd = usePlayback(s => s.progressEnd);
+  const progressStartPct = usePlayback(s => s.progressStartPct);
+  const progressEndPct = usePlayback(s => s.progressEndPct);
   const absTime = usePlayback(s => s.currentTime);
   const track = usePlayback(s => s.track);
   const trackOffset = usePlayback(s => s.trackOffset);
@@ -60,12 +62,18 @@ export function TopLeftStatus({ sample, currentTime, trackProgress }: Props) {
     const dStart = distanceAtTime(pts, trackOffset, tStart);
     const dEnd = distanceAtTime(pts, trackOffset, tEnd);
     const dNow = distanceAtTime(pts, trackOffset, absTime);
+    let frac: number;
     if (dStart !== null && dEnd !== null && dNow !== null && dEnd > dStart) {
-      progress = Math.max(0, Math.min(1, (dNow - dStart) / (dEnd - dStart)));
+      frac = Math.max(0, Math.min(1, (dNow - dStart) / (dEnd - dStart)));
     } else {
       // Fallback to time-based when track has no time-tagged points.
-      progress = Math.max(0, Math.min(1, (absTime - tStart) / (tEnd - tStart)));
+      frac = Math.max(0, Math.min(1, (absTime - tStart) / (tEnd - tStart)));
     }
+    // Map the 0..1 position within the marker range onto the configured
+    // percentage span so the markers can read arbitrary values, not just 0→100.
+    const lo = progressStartPct / 100;
+    const hi = progressEndPct / 100;
+    progress = lo + frac * (hi - lo);
   }
   const pct = Math.round(progress * 100);
 
