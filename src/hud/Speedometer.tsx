@@ -51,7 +51,9 @@ export function Speedometer({ sample, unit, rpmMax }: Props) {
 
   const redDeg = START_DEG + SWEEP * RED_FRAC;
   const curDeg = START_DEG + SWEEP * rpmFrac;
-  const whiteEnd = Math.min(curDeg, redDeg);
+  // Active arc runs the full current RPM and is drawn after the red zone,
+  // so it overlays on top of the high-RPM red bar instead of stopping at it.
+  const whiteEnd = curDeg;
   const [dotX, dotY] = polar(curDeg);
 
   // Inner arcs fill from the bottom end toward the top end as value grows.
