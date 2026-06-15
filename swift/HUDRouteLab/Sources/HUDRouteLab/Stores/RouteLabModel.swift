@@ -174,30 +174,42 @@ final class RouteLabModel {
         panel.allowedContentTypes = ["gpx", "geojson", "json"].compactMap { UTType(filenameExtension: $0) }
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let document = try TrackImportService.parse(data: Data(contentsOf: url), fileName: url.lastPathComponent)
-            let track = document.track
-            importedTrack = track
-            roads = document.referenceRoads
-            marks = []
-            route = .empty
-            selectedMarkID = nil
-            snapPreview = .empty
-            let bounds = MapBounds(points: track.coordinates, paddingM: 200)
-            latitude = bounds.center.lat
-            longitude = bounds.center.lon
-            radiusM = max(250, bounds.radiusM)
-            if let range = track.timelineRange {
-                cursorSeconds = range.lowerBound
-                revealCursor()
+        isLoading = true
+        status = "正在读取并解析文件..."
+        Task {
+            do {
+                let fileName = url.lastPathComponent
+                let document = try await Task.detached(priority: .userInitiated) {
+                    try TrackImportService.parse(data: Data(contentsOf: url), fileName: fileName)
+                }.value
+                let track = document.track
+                let bounds = MapBounds(points: track.coordinates, paddingM: 200)
+                importedTrack = track
+                roads = document.referenceRoads
+                marks = []
+                route = .empty
+                selectedMarkID = nil
+                snapPreview = .empty
+                latitude = bounds.center.lat
+                longitude = bounds.center.lon
+                radiusM = max(250, bounds.radiusM)
+                if let range = track.timelineRange {
+                    cursorSeconds = range.lowerBound
+                    revealCursor()
+                }
+                let hasReferenceRoads = !document.referenceRoads.isEmpty
+                status = hasReferenceRoads
+                    ? "已导入 \(track.name)，识别到 \(document.referenceRoads.count) 条参考道路，正在计算吸附预览..."
+                    : "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
+                resetMap()
+                if hasReferenceRoads {
+                    await rebuildSnapPreviewInBackground()
+                    status = "已导入 \(track.name)，识别到 \(document.referenceRoads.count) 条参考道路，吸附预览已更新。"
+                }
+            } catch {
+                status = "轨迹导入失败：\(error.localizedDescription)"
             }
-            status = document.referenceRoads.isEmpty
-                ? "已导入 \(track.name)，共 \(track.points.count) 个轨迹点。可补全路网并预览吸附效果。"
-                : "已导入 \(track.name)，识别到 \(document.referenceRoads.count) 条参考道路，吸附预览已更新。"
-            resetMap()
-            rebuildSnapPreview()
-        } catch {
-            status = "轨迹导入失败：\(error.localizedDescription)"
+            isLoading = false
         }
     }
 
@@ -268,11 +280,14 @@ final class RouteLabModel {
                 marks = []
                 route = .empty
                 selectedMarkID = nil
-                rebuildSnapPreview()
-                status = roads.isEmpty
-                    ? "导入轨迹周边没有找到道路。"
-                    : "已补全 \(roads.count) 条道路，吸附预览已更新。"
-                resetMap()
+                if roads.isEmpty {
+                    status = "导入轨迹周边没有找到道路。"
+                } else {
+                    status = "已补全 \(roads.count) 条道路，正在计算吸附预览..."
+                    resetMap()
+                    await rebuildSnapPreviewInBackground()
+                    status = "已补全 \(roads.count) 条道路，吸附预览已更新。"
+                }
             } catch {
                 status = "路网补全失败：\(error.localizedDescription)"
             }
@@ -521,6 +536,17 @@ final class RouteLabModel {
             roads: roads,
             maximumDistanceM: snapDistanceM
         )
+        mapContentRevision += 1
+    }
+
+    private func rebuildSnapPreviewInBackground() async {
+        let coords = importedCoordinates
+        let roadsSnapshot = roads
+        let distM = snapDistanceM
+        let preview = await Task.detached(priority: .userInitiated) {
+            RouteEngine.buildSnapPreview(points: coords, roads: roadsSnapshot, maximumDistanceM: distM)
+        }.value
+        snapPreview = preview
         mapContentRevision += 1
     }
 

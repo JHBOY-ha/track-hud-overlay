@@ -41,6 +41,13 @@ enum TrackImportService {
         } else {
             features = [["type": "Feature", "geometry": root]]
         }
+        let isoFractional = ISO8601DateFormatter()
+        isoFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let isoStandard = ISO8601DateFormatter()
+        isoStandard.formatOptions = [.withInternetDateTime]
+        let parseDate = { (value: String) -> Date? in
+            isoFractional.date(from: value) ?? isoStandard.date(from: value)
+        }
         var track: ImportedTrack?
         let preferred = features.sorted { featurePriority($0) < featurePriority($1) }
         for feature in preferred {
@@ -55,7 +62,7 @@ enum TrackImportService {
                 guard coordinate.count >= 2 else { return nil }
                 return ImportedTrackPoint(
                     point: GeoPoint(lat: coordinate[1], lon: coordinate[0]),
-                    time: index < timeStrings.count ? parseISODate(timeStrings[index]) : nil
+                    time: index < timeStrings.count ? parseDate(timeStrings[index]) : nil
                 )
             }
             if points.count > 1 {
@@ -127,14 +134,6 @@ enum TrackImportService {
         String(format: "geojson:%.7f:%.7f", lat, lon)
     }
 
-    fileprivate static func parseISODate(_ value: String) -> Date? {
-        let fractional = ISO8601DateFormatter()
-        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let date = fractional.date(from: value) { return date }
-        let standard = ISO8601DateFormatter()
-        standard.formatOptions = [.withInternetDateTime]
-        return standard.date(from: value)
-    }
 }
 
 private final class GPXTrackParser: NSObject, XMLParserDelegate {
@@ -142,6 +141,16 @@ private final class GPXTrackParser: NSObject, XMLParserDelegate {
     private var currentPoint: GeoPoint?
     private var currentText = ""
     private var currentTime: Date?
+    private let isoFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
+    private let isoStandard: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
 
     static func parse(_ data: Data, name: String) throws -> ImportedTrack {
         let delegate = GPXTrackParser()
@@ -168,7 +177,8 @@ private final class GPXTrackParser: NSObject, XMLParserDelegate {
 
     func parser(_ parser: XMLParser, didEndElement elementName: String, namespaceURI: String?, qualifiedName: String?) {
         if elementName == "time", currentPoint != nil {
-            currentTime = TrackImportService.parseISODate(currentText.trimmingCharacters(in: .whitespacesAndNewlines))
+            let value = currentText.trimmingCharacters(in: .whitespacesAndNewlines)
+            currentTime = isoFractional.date(from: value) ?? isoStandard.date(from: value)
         } else if ["trkpt", "rtept"].contains(elementName), let currentPoint {
             points.append(ImportedTrackPoint(point: currentPoint, time: currentTime))
             self.currentPoint = nil
