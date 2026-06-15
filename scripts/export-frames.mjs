@@ -8,7 +8,7 @@
 //     --track /samples/track.gpx \
 //     --duration 120 --range-start 0 --range-end 120 --fps 60 \
 //     --progress-start 0 --progress-end 120 \
-//     --progress-start-pct 0 --progress-end-pct 100 \
+//     --progress-start-pct 0 --progress-end-pct 100 --elapsed-start 0 \
 //     --width 1920 --height 1080 \
 //     --coord wgs84 \
 //     --out out/hud.webm
@@ -184,6 +184,7 @@ export async function main() {
   const PROGRESS_END = Number(arg('progress-end', 'NaN'));
   const PROGRESS_START_PCT = arg('progress-start-pct', null);
   const PROGRESS_END_PCT = arg('progress-end-pct', null);
+  const ELAPSED_START = arg('elapsed-start', null);
   const SNAP_TO_ROADS = arg('snap-to-roads', null);
   const SNAP_MAX_DIST = arg('snap-max-dist', null);
   const MINIMAP_RADIUS = arg('minimap-radius', null);
@@ -261,6 +262,7 @@ export async function main() {
       if (PROGRESS_START_PCT !== null) url.searchParams.set('progressStartPct', String(PROGRESS_START_PCT));
       if (PROGRESS_END_PCT !== null) url.searchParams.set('progressEndPct', String(PROGRESS_END_PCT));
     }
+    if (ELAPSED_START !== null) url.searchParams.set('elapsedStart', String(ELAPSED_START));
     if (SNAP_TO_ROADS !== null) {
       const v = String(SNAP_TO_ROADS).trim().toLowerCase();
       url.searchParams.set('snapToRoads', v === '1' || v === 'true' ? '1' : '0');

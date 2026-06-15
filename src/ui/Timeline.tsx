@@ -7,7 +7,7 @@ import {
   type Range,
   type SourceKey,
 } from '../playback/store';
-import { formatTimecode, PROJECT_FPS_OPTIONS } from '../util/timecode';
+import { formatClock, formatTimecode, parseClock, PROJECT_FPS_OPTIONS } from '../util/timecode';
 
 const LANE_META: Record<SourceKey, { label: string; color: string }> = {
   track: { label: 'GPX', color: '#5fa8ff' },
@@ -61,6 +61,7 @@ export function Timeline() {
   const progressEnd = usePlayback(s => s.progressEnd);
   const progressStartPct = usePlayback(s => s.progressStartPct);
   const progressEndPct = usePlayback(s => s.progressEndPct);
+  const elapsedStart = usePlayback(s => s.elapsedStart);
 
   const telemetryOffset = usePlayback(s => s.telemetryOffset);
   const trackOffset = usePlayback(s => s.trackOffset);
@@ -82,6 +83,7 @@ export function Timeline() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [selectedLane, setSelectedLane] = useState<SourceKey | null>(null);
   const [edgeHover, setEdgeHover] = useState<{ lane: SourceKey; side: 'left' | 'right' } | null>(null);
+  const [elapsedStartText, setElapsedStartText] = useState(() => formatClock(elapsedStart));
 
   useEffect(() => {
     if (!trackRef.current) return;
@@ -645,6 +647,31 @@ export function Timeline() {
         >
           清除进度
         </button>
+        <span style={{ width: 1, height: 20, background: '#333' }} />
+        <span style={{ color: '#bbb', fontSize: 12 }}>Elapsed 起点</span>
+        <input
+          type="text"
+          value={elapsedStartText}
+          placeholder="时:分:秒"
+          onChange={e => {
+            const text = e.target.value;
+            setElapsedStartText(text);
+            const secs = parseClock(text);
+            if (secs !== null) usePlayback.getState().setElapsedStart(secs);
+          }}
+          onBlur={() => setElapsedStartText(formatClock(usePlayback.getState().elapsedStart))}
+          style={{
+            width: 84,
+            padding: '4px 6px',
+            background: '#222',
+            color: '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: 12,
+          }}
+          title="左上角 Elapsed 的起始时间（如 00:02:30 或 150）"
+        />
       </div>
 
       {/* Track region */}

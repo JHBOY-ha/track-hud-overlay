@@ -45,6 +45,7 @@ export function TopLeftStatus({ sample, currentTime, trackProgress }: Props) {
   const progressEnd = usePlayback(s => s.progressEnd);
   const progressStartPct = usePlayback(s => s.progressStartPct);
   const progressEndPct = usePlayback(s => s.progressEndPct);
+  const elapsedStart = usePlayback(s => s.elapsedStart);
   const absTime = usePlayback(s => s.currentTime);
   const track = usePlayback(s => s.track);
   const trackOffset = usePlayback(s => s.trackOffset);
@@ -75,6 +76,8 @@ export function TopLeftStatus({ sample, currentTime, trackProgress }: Props) {
     const hi = progressEndPct / 100;
     progress = lo + frac * (hi - lo);
   }
+  // Offset the elapsed clock so a clip can start at an arbitrary stage time.
+  elapsed += elapsedStart;
   const pct = Math.round(progress * 100);
 
   return (

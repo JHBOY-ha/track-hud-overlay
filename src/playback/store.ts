@@ -222,6 +222,9 @@ interface PlaybackState {
    *  but settable to any value so a clip can read e.g. 30%→85% of a stage. */
   progressStartPct: number;
   progressEndPct: number;
+  /** Seconds added to the top-left Elapsed readout, so a clip can start the
+   *  elapsed clock at an arbitrary stage time (e.g. 00:02:30). */
+  elapsedStart: number;
   /** Legacy export-duration override (kept for export pipeline). null = use
    *  effective selection length. */
   projectDuration: number | null;
@@ -266,6 +269,7 @@ interface PlaybackState {
   setProgressEnd(t: number | null): void;
   setProgressStartPct(p: number): void;
   setProgressEndPct(p: number): void;
+  setElapsedStart(s: number): void;
   clearProgressRange(): void;
   clearVideo(): void;
   setSourceTrim(source: SourceKey, start: number, end: number): void;
@@ -310,6 +314,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   progressEnd: null,
   progressStartPct: 0,
   progressEndPct: 100,
+  elapsedStart: 0,
   projectDuration: null,
 
   setPreviewAspect: a => set({ previewAspect: a }),
@@ -412,6 +417,7 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
   },
   setProgressStartPct: p => set({ progressStartPct: clampN(p, 0, 100) }),
   setProgressEndPct: p => set({ progressEndPct: clampN(p, 0, 100) }),
+  setElapsedStart: s => set({ elapsedStart: Number.isFinite(s) && s >= 0 ? s : 0 }),
   clearProgressRange: () =>
     set({ progressStart: null, progressEnd: null, progressStartPct: 0, progressEndPct: 100 }),
   setSelection: (start, end) => {

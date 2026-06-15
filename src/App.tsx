@@ -151,6 +151,7 @@ export function App() {
     const progressEnd = Number(q.get('progressEnd'));
     const progressStartPct = q.get('progressStartPct');
     const progressEndPct = q.get('progressEndPct');
+    const elapsedStartParam = q.get('elapsedStart');
     const telemetryOffset = Number(q.get('telemetryOffset') ?? '0');
     const trackOffset = Number(q.get('trackOffset') ?? '0');
     const videoOffset = Number(q.get('videoOffset') ?? '0');
@@ -250,6 +251,9 @@ export function App() {
           if (progressEndPct !== null && Number.isFinite(Number(progressEndPct))) {
             usePlayback.getState().setProgressEndPct(Number(progressEndPct));
           }
+        }
+        if (elapsedStartParam !== null && Number.isFinite(Number(elapsedStartParam))) {
+          usePlayback.getState().setElapsedStart(Number(elapsedStartParam));
         }
         if (!Number.isNaN(t0)) usePlayback.getState().seek(t0);
       } catch (e) {
@@ -917,6 +921,7 @@ function ExportSettingsPanel({
   const progressEnd = usePlayback(s => s.progressEnd);
   const progressStartPct = usePlayback(s => s.progressStartPct);
   const progressEndPct = usePlayback(s => s.progressEndPct);
+  const elapsedStart = usePlayback(s => s.elapsedStart);
   const [rangeStart, rangeEnd] = usePlayback(s => effectiveRange(s));
   const duration = Math.max(0, rangeEnd - rangeStart);
   const rangeStartFrame = secondsToFrame(rangeStart, fps);
@@ -1003,6 +1008,7 @@ function ExportSettingsPanel({
             '--progress-end-pct', String(progressEndPct),
           ]
         : []),
+      ...(elapsedStart > 0 ? ['--elapsed-start', String(elapsedStart)] : []),
       '--out', outPath,
     ];
     return args.map(shellQuote).join(' ');
@@ -1037,6 +1043,7 @@ function ExportSettingsPanel({
     progressEnd,
     progressStartPct,
     progressEndPct,
+    elapsedStart,
     outPath,
   ]);
 

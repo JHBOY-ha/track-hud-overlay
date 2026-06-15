@@ -27,3 +27,29 @@ export function formatTimecode(seconds: number, fps: number): string {
 
   return `${sign}${pad2(hh)}:${pad2(mm)}:${pad2(ss)}:${String(ff).padStart(frameDigits, '0')}`;
 }
+
+/** Format seconds as "HH:MM:SS" (whole seconds, no frames). */
+export function formatClock(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) seconds = 0;
+  const total = Math.floor(seconds);
+  const ss = total % 60;
+  const mm = Math.floor(total / 60) % 60;
+  const hh = Math.floor(total / 3600);
+  return `${pad2(hh)}:${pad2(mm)}:${pad2(ss)}`;
+}
+
+/** Parse a clock string into seconds. Accepts "HH:MM:SS(.mmm)", "MM:SS(.mmm)",
+ *  or a plain seconds number. Returns null if it can't be parsed. */
+export function parseClock(input: string): number | null {
+  const str = input.trim();
+  if (str === '') return null;
+  const parts = str.split(':');
+  if (parts.length > 3) return null;
+  let seconds = 0;
+  for (const part of parts) {
+    const n = Number(part);
+    if (!Number.isFinite(n) || n < 0) return null;
+    seconds = seconds * 60 + n;
+  }
+  return seconds;
+}
