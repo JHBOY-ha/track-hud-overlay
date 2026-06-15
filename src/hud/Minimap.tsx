@@ -23,7 +23,7 @@ interface Props {
   playerName: string;
 }
 
-const HEADING_SMOOTHING_TIME_S = 0.35;
+const HEADING_SMOOTHING_TIME_S = 0.18;
 const MAP_ALPHA_MASK =
   'radial-gradient(circle at 50% 50%, #000 0%, #000 38%, rgba(0,0,0,0.74) 56%, rgba(0,0,0,0.28) 74%, transparent 96%)';
 const MAP_CONTENT_INSET = 10;
