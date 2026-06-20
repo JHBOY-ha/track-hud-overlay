@@ -19,6 +19,7 @@ const HANDLE_HIT_PX = 8;
 const EDGE_HIT_PX = 6;
 const MIN_TRIM_WIDTH = EDGE_HIT_PX * 2 + 4; // lane too narrow for trim edges
 const MIN_VIEW_FRAMES = 8;
+const SNAP_TO_PLAYHEAD_PX = 10;
 const SHUTTLE_RATES = [1, 2, 4, 8];
 
 interface DragState {
@@ -32,6 +33,8 @@ interface DragState {
   initialOffset?: number;
   initialTrimStart?: number;
   initialTrimEnd?: number;
+  initialRangeStart?: number;
+  initialRangeEnd?: number;
   initialSelStart?: number | null;
   initialSelEnd?: number | null;
 }
@@ -67,6 +70,11 @@ function nextShuttleRate(rate: number, playing: boolean, direction: 1 | -1): num
   const abs = Math.abs(rate);
   const next = SHUTTLE_RATES.find(r => r > abs + 1e-6) ?? SHUTTLE_RATES[SHUTTLE_RATES.length - 1];
   return next * direction;
+}
+
+function snapTimeToFrame(t: number, fps: number): number {
+  if (!Number.isFinite(t) || fps <= 0) return t;
+  return Math.round(t * fps) / fps;
 }
 
 export function Timeline() {
@@ -129,6 +137,8 @@ export function Timeline() {
   const pxPerSec = width > 0 && viewSpan > 0 ? width / viewSpan : 0;
   const tToX = (t: number) => (t - viewStart) * pxPerSec;
   const xToT = (x: number) => viewStart + x / pxPerSec;
+  const snapT = (t: number) => snapTimeToFrame(t, fps);
+  const currentFrameTime = snapT(currentTime);
 
   const hasSelection = playbackStart !== null && playbackEnd !== null;
   const isZoomed = viewRange !== null;
@@ -164,6 +174,14 @@ export function Timeline() {
     usePlayback.getState().setSourceTrim(k, start, end);
   };
 
+  const snapEdgeToPlayhead = (t: number) => {
+    const frameT = snapT(t);
+    if (pxPerSec <= 0) return frameT;
+    return Math.abs(tToX(frameT) - tToX(currentFrameTime)) <= SNAP_TO_PLAYHEAD_PX
+      ? currentFrameTime
+      : frameT;
+  };
+
   const resetView = () => setViewRange(null);
 
   const revealTime = (t: number) => {
@@ -180,7 +198,7 @@ export function Timeline() {
     const st = usePlayback.getState();
     st.pause();
     const target = st.currentTime + frames / st.projectFps;
-    st.seek(target);
+    st.seek(snapTimeToFrame(target, st.projectFps));
     revealTime(usePlayback.getState().currentTime);
   };
 
@@ -209,8 +227,10 @@ export function Timeline() {
     // Detect edge hit for trim vs middle for offset
     const range = ranges[k];
     if (range) {
-      const laneLeft = tToX(range[0]);
-      const laneWidth = Math.max(2, tToX(range[1]) - tToX(range[0]));
+      const laneStart = snapT(range[0]);
+      const laneEnd = snapT(range[1]);
+      const laneLeft = tToX(laneStart);
+      const laneWidth = Math.max(2, tToX(laneEnd) - tToX(laneStart));
       const pxInLane = px - laneLeft;
       const [trimS, trimE] = trimOf(k);
       if (laneWidth >= MIN_TRIM_WIDTH && pxInLane < EDGE_HIT_PX) {
@@ -223,6 +243,8 @@ export function Timeline() {
           startClientY: e.clientY,
           initialTrimStart: trimS,
           initialTrimEnd: trimE,
+          initialRangeStart: range[0],
+          initialRangeEnd: range[1],
         });
         return;
       }
@@ -236,6 +258,8 @@ export function Timeline() {
           startClientY: e.clientY,
           initialTrimStart: trimS,
           initialTrimEnd: trimE,
+          initialRangeStart: range[0],
+          initialRangeEnd: range[1],
         });
         return;
       }
@@ -248,6 +272,8 @@ export function Timeline() {
       startClientX: e.clientX,
       startClientY: e.clientY,
       initialOffset: offsetOf(k),
+      initialRangeStart: range?.[0],
+      initialRangeEnd: range?.[1],
     });
   };
 
@@ -256,9 +282,9 @@ export function Timeline() {
     e.preventDefault();
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     const px = localX(e);
-    const t = xToT(px);
+    const t = snapT(xToT(px));
 
-    const hit = pickHandleHit(px, playbackStart, playbackEnd, tToX);
+    const hit = pickHandleHit(px, playbackStart, playbackEnd, t => tToX(snapT(t)));
     if (hit === 'l') {
       setDrag({
         kind: 'selection-resize-l',
@@ -348,19 +374,33 @@ export function Timeline() {
       const rect = trackRef.current.getBoundingClientRect();
       const px = e.clientX - rect.left;
       const dt = (px - drag.startPx) / pxPerSec;
-      const t = xToT(px);
+      const t = snapT(xToT(px));
 
       if (drag.kind === 'offset' && drag.source) {
-        setOffset(drag.source, (drag.initialOffset ?? 0) + dt);
+        const initialStart = drag.initialRangeStart ?? 0;
+        const initialEnd = drag.initialRangeEnd ?? initialStart;
+        const targetStart = initialStart + dt;
+        const targetEnd = initialEnd + dt;
+        let snappedStart = snapT(targetStart);
+        if (Math.abs(tToX(snapT(targetStart)) - tToX(currentFrameTime)) <= SNAP_TO_PLAYHEAD_PX) {
+          snappedStart = currentFrameTime;
+        } else if (Math.abs(tToX(snapT(targetEnd)) - tToX(currentFrameTime)) <= SNAP_TO_PLAYHEAD_PX) {
+          snappedStart = currentFrameTime - (initialEnd - initialStart);
+        }
+        setOffset(drag.source, (drag.initialOffset ?? 0) + (snappedStart - initialStart));
       } else if ((drag.kind === 'trim-left' || drag.kind === 'trim-right') && drag.source) {
         const k = drag.source;
         const [curStart, curEnd] = trimOf(k);
         const dur = sourceDuration(k, ranges);
         if (drag.kind === 'trim-left') {
-          const newStart = Math.max(0, Math.min(dur - curEnd, (drag.initialTrimStart ?? 0) + dt));
+          const rawStart = (drag.initialRangeStart ?? 0) - (drag.initialTrimStart ?? 0);
+          const desiredEdge = snapEdgeToPlayhead((drag.initialRangeStart ?? 0) + dt);
+          const newStart = Math.max(0, Math.min(dur - curEnd, desiredEdge - rawStart));
           setTrim(k, newStart, curEnd);
         } else {
-          const newEnd = Math.max(0, Math.min(dur - curStart, (drag.initialTrimEnd ?? 0) - dt));
+          const rawEnd = (drag.initialRangeEnd ?? 0) + (drag.initialTrimEnd ?? 0);
+          const desiredEdge = snapEdgeToPlayhead((drag.initialRangeEnd ?? 0) + dt);
+          const newEnd = Math.max(0, Math.min(dur - curStart, rawEnd - desiredEdge));
           setTrim(k, curStart, newEnd);
         }
       } else if (drag.kind === 'selection-new') {
@@ -374,8 +414,10 @@ export function Timeline() {
         const dx = e.clientX - drag.startClientX;
         const dy = e.clientY - drag.startClientY;
         if (Math.abs(dx) < 3 && Math.abs(dy) < 3) return;
-        const a = (drag.initialSelStart ?? 0) + dt;
-        const b = (drag.initialSelEnd ?? 0) + dt;
+        const selStart0 = drag.initialSelStart ?? 0;
+        const selEnd0 = drag.initialSelEnd ?? selStart0;
+        const a = snapT(selStart0 + dt);
+        const b = a + (selEnd0 - selStart0);
         usePlayback.getState().setSelection(a, b);
       } else if (drag.kind === 'selection-resize-l') {
         usePlayback.getState().setSelection(t, drag.initialSelEnd ?? t);
@@ -390,7 +432,7 @@ export function Timeline() {
         const dx = e.clientX - drag.startClientX;
         const dy = e.clientY - drag.startClientY;
         if (Math.abs(dx) < 3 && Math.abs(dy) < 3) {
-          usePlayback.getState().seek(drag.startTime);
+          usePlayback.getState().seek(snapT(drag.startTime));
           setDrag(null);
           return;
         }
@@ -479,7 +521,7 @@ export function Timeline() {
         e.preventDefault();
         const [start] = effectiveRange(usePlayback.getState());
         st.pause();
-        st.seek(start);
+        st.seek(snapTimeToFrame(start, st.projectFps));
         revealTime(usePlayback.getState().currentTime);
         return;
       }
@@ -487,7 +529,7 @@ export function Timeline() {
         e.preventDefault();
         const [, end] = effectiveRange(usePlayback.getState());
         st.pause();
-        st.seek(end);
+        st.seek(snapTimeToFrame(end, st.projectFps));
         revealTime(usePlayback.getState().currentTime);
       }
     };
@@ -507,7 +549,10 @@ export function Timeline() {
   const ticks = useMemo(() => {
     if (!pxPerSec || viewSpan <= 0) return [] as { t: number; major: boolean }[];
     const minPxBetween = 70;
-    const candidates = [1, 5, 10, 30, 60, 300, 600, 1800, 3600];
+    const frame = 1 / fps;
+    const candidates = [frame, frame * 2, frame * 5, frame * 10, frame * 15, frame * 30, 1, 5, 10, 30, 60, 300, 600, 1800, 3600]
+      .filter((v, i, arr) => v > 0 && arr.findIndex(x => Math.abs(x - v) < 1e-9) === i)
+      .sort((a, b) => a - b);
     let stride = candidates[candidates.length - 1];
     for (const c of candidates) {
       if (c * pxPerSec >= minPxBetween) {
@@ -518,10 +563,15 @@ export function Timeline() {
     const out: { t: number; major: boolean }[] = [];
     const first = Math.ceil(viewStart / stride) * stride;
     for (let t = first; t <= viewStart + viewSpan; t += stride) {
-      out.push({ t, major: stride >= 60 ? t % (stride * 5) === 0 : false });
+      const frameIndex = Math.round(t * fps);
+      const framesPerSecond = Math.round(fps);
+      out.push({
+        t: snapTimeToFrame(t, fps),
+        major: stride < 1 ? frameIndex % framesPerSecond === 0 : stride >= 60 ? t % (stride * 5) === 0 : false,
+      });
     }
     return out;
-  }, [pxPerSec, viewStart, viewSpan]);
+  }, [fps, pxPerSec, viewStart, viewSpan]);
 
   if (exporterMode) return null;
 
@@ -580,14 +630,17 @@ export function Timeline() {
           }}
           title={`${currentTime.toFixed(3)} s of day · ${fps}fps`}
         >
-          {formatTimecode(currentTime, fps)} &nbsp; <span style={{ color: '#777' }}>选区</span>{' '}
+          {formatTimecode(currentFrameTime, fps)} &nbsp; <span style={{ color: '#777' }}>选区</span>{' '}
           {formatTimecode(selStart, fps)} - {formatTimecode(selEnd, fps)} ({formatTimecode(selEnd - selStart, fps)})
         </span>
         <label>
           FPS
           <select
             value={fps}
-            onChange={e => usePlayback.getState().setProjectFps(Number(e.target.value))}
+            onChange={e => {
+              usePlayback.getState().setProjectFps(Number(e.target.value));
+              e.currentTarget.blur();
+            }}
             style={{ marginLeft: 6 }}
           >
             {PROJECT_FPS_OPTIONS.map(v => (
@@ -599,7 +652,10 @@ export function Timeline() {
           倍速
           <select
             value={rate}
-            onChange={e => usePlayback.getState().setRate(Number(e.target.value))}
+            onChange={e => {
+              usePlayback.getState().setRate(Number(e.target.value));
+              e.currentTarget.blur();
+            }}
             style={{ marginLeft: 6 }}
           >
             {[-8, -4, -2, -1, 0.25, 0.5, 1, 2, 4, 8].map(r => (
@@ -693,7 +749,7 @@ export function Timeline() {
         <button
           onClick={() => {
             const st = usePlayback.getState();
-            const cur = st.currentTime;
+            const cur = snapT(st.currentTime);
             const end = st.playbackEnd ?? axisEnd;
             st.setSelection(cur, Math.max(cur, end));
           }}
@@ -715,7 +771,7 @@ export function Timeline() {
         <button
           onClick={() => {
             const st = usePlayback.getState();
-            const cur = st.currentTime;
+            const cur = snapT(st.currentTime);
             const start = st.playbackStart ?? axisStart;
             st.setSelection(Math.min(start, cur), cur);
           }}
@@ -736,7 +792,7 @@ export function Timeline() {
         </button>
         <span style={{ width: 1, height: 20, background: '#333' }} />
         <button
-          onClick={() => usePlayback.getState().setProgressStart(usePlayback.getState().currentTime)}
+          onClick={() => usePlayback.getState().setProgressStart(snapT(usePlayback.getState().currentTime))}
           disabled={!hasAnyData}
           style={{
             padding: '4px 10px',
@@ -773,7 +829,7 @@ export function Timeline() {
         />
         <span style={{ color: '#9ad6ff', fontSize: 11 }}>%</span>
         <button
-          onClick={() => usePlayback.getState().setProgressEnd(usePlayback.getState().currentTime)}
+          onClick={() => usePlayback.getState().setProgressEnd(snapT(usePlayback.getState().currentTime))}
           disabled={!hasAnyData}
           style={{
             padding: '4px 10px',
@@ -908,10 +964,10 @@ export function Timeline() {
           <div
             style={{
               position: 'absolute',
-              left: tToX(selStart),
+              left: tToX(snapT(selStart)),
               top: 0,
               bottom: 0,
-              width: Math.max(1, tToX(selEnd) - tToX(selStart)),
+              width: Math.max(1, tToX(snapT(selEnd)) - tToX(snapT(selStart))),
               background: 'rgba(108, 207, 255, 0.18)',
               borderLeft: '1px solid rgba(108, 207, 255, 0.7)',
               borderRight: '1px solid rgba(108, 207, 255, 0.7)',
@@ -924,8 +980,10 @@ export function Timeline() {
         {lanes.map(([k, r], i) => {
           const meta = LANE_META[k];
           const top = 18 + laneGap + i * (laneHeight + laneGap);
-          const left = tToX(r[0]);
-          const w = Math.max(2, tToX(r[1]) - tToX(r[0]));
+          const frameStart = snapT(r[0]);
+          const frameEnd = snapT(r[1]);
+          const left = tToX(frameStart);
+          const w = Math.max(2, tToX(frameEnd) - tToX(frameStart));
           return (
             <div
               key={k}
@@ -933,8 +991,8 @@ export function Timeline() {
               onPointerMove={e => {
                 if (drag) return;
                 const px = localX(e);
-                const laneLeft = tToX(r[0]);
-                const laneWidth = Math.max(2, tToX(r[1]) - tToX(r[0]));
+                const laneLeft = tToX(frameStart);
+                const laneWidth = Math.max(2, tToX(frameEnd) - tToX(frameStart));
                 const pxInLane = px - laneLeft;
                 if (laneWidth >= MIN_TRIM_WIDTH && pxInLane < EDGE_HIT_PX) {
                   setEdgeHover({ lane: k, side: 'left' });
@@ -968,7 +1026,7 @@ export function Timeline() {
                 outline: selectedLane === k ? '2px solid #fff' : 'none',
                 outlineOffset: -2,
               }}
-              title={`${meta.label}  ${formatTimecode(r[0], fps)} -> ${formatTimecode(r[1], fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s · 裁剪 ${trimOf(k)[0].toFixed(1)}+${trimOf(k)[1].toFixed(1)}s`}
+              title={`${meta.label}  ${formatTimecode(frameStart, fps)} -> ${formatTimecode(frameEnd, fps)}  · 偏移 ${offsetOf(k).toFixed(2)}s · 裁剪 ${trimOf(k)[0].toFixed(1)}+${trimOf(k)[1].toFixed(1)}s`}
             >
               {w >= MIN_TRIM_WIDTH && (
                 <div style={{
@@ -986,7 +1044,7 @@ export function Timeline() {
                   pointerEvents: 'none',
                 }} />
               )}
-              {meta.label} {formatTimecode(r[0], fps)}
+              {meta.label} {formatTimecode(frameStart, fps)}
             </div>
           );
         })}
@@ -996,10 +1054,10 @@ export function Timeline() {
           <div
             style={{
               position: 'absolute',
-              left: tToX(progressStart),
+              left: tToX(snapT(progressStart)),
               top: 0,
               bottom: 0,
-              width: Math.max(1, tToX(progressEnd) - tToX(progressStart)),
+              width: Math.max(1, tToX(snapT(progressEnd)) - tToX(snapT(progressStart))),
               background: 'rgba(154, 214, 255, 0.08)',
               borderTop: '2px solid rgba(154, 214, 255, 0.7)',
               pointerEvents: 'none',
@@ -1010,7 +1068,7 @@ export function Timeline() {
           <div
             style={{
               position: 'absolute',
-              left: tToX(progressStart),
+              left: tToX(snapT(progressStart)),
               top: 0,
               bottom: 0,
               width: 1,
@@ -1026,7 +1084,7 @@ export function Timeline() {
           <div
             style={{
               position: 'absolute',
-              left: tToX(progressEnd),
+              left: tToX(snapT(progressEnd)),
               top: 0,
               bottom: 0,
               width: 1,
@@ -1044,7 +1102,7 @@ export function Timeline() {
           <div
             style={{
               position: 'absolute',
-              left: tToX(currentTime),
+              left: tToX(currentFrameTime),
               top: 0,
               bottom: 0,
               width: 1,
@@ -1072,7 +1130,7 @@ export function Timeline() {
             <div
               style={{
                 position: 'absolute',
-                left: tToX(selStart) - 3,
+                left: tToX(snapT(selStart)) - 3,
                 top: 0,
                 bottom: 0,
                 width: 6,
@@ -1084,7 +1142,7 @@ export function Timeline() {
             <div
               style={{
                 position: 'absolute',
-                left: tToX(selEnd) - 3,
+                left: tToX(snapT(selEnd)) - 3,
                 top: 0,
                 bottom: 0,
                 width: 6,
