@@ -13,14 +13,50 @@ import {
 } from './util/coordinateSystems';
 import { PROJECT_FPS_OPTIONS } from './util/timecode';
 import { parseMp4TimecodeFromBlob } from './util/videoTimecode';
+import {
+  buildProject,
+  downloadProject,
+  isProjectFilename,
+  parseProjectText,
+  projectFilename,
+  type Hud5Project,
+} from './util/projectFile';
+import { parseExportCommand } from './util/exportCommand';
 
 function secondsToFrame(seconds: number, fps: number): number {
   return Math.round(seconds * fps);
 }
 
-async function loadTelemetryFromUrl(url: string) {
+/** Fetch a data file's text, failing clearly when the URL isn't a real file —
+ *  e.g. a bare path that the dev server answers with the SPA index.html. */
+async function fetchDataText(url: string): Promise<string> {
   const res = await fetch(url);
-  const text = await res.text();
+  if (!res.ok) throw new Error(`无法读取 ${url}（HTTP ${res.status}）`);
+  const contentType = res.headers.get('content-type') ?? '';
+  if (contentType.includes('text/html')) {
+    throw new Error(`路径 ${url} 不是可读取的数据文件`);
+  }
+  return res.text();
+}
+
+/** Map a path from an export command to a URL the browser can fetch. Commands
+ *  often carry absolute filesystem paths (readable only by the Node export
+ *  CLI); only files under the dev server's /output or /samples are reachable
+ *  here. Returns null when the path can't be loaded in the browser. */
+function toBrowserDataUrl(rawPath: string): string | null {
+  const p = rawPath.trim();
+  if (p === '') return null;
+  if (/^https?:\/\//i.test(p)) return p;
+  for (const seg of ['/output/', '/samples/']) {
+    const i = p.lastIndexOf(seg);
+    if (i >= 0) return p.slice(i);
+  }
+  if (p.startsWith('output/') || p.startsWith('samples/')) return `/${p}`;
+  return null;
+}
+
+async function loadTelemetryFromUrl(url: string) {
+  const text = await fetchDataText(url);
   return url.endsWith('.json') ? parseTelemetryJson(text) : parseTelemetryCsv(text);
 }
 
@@ -53,8 +89,7 @@ function parseTrackText(
 }
 
 async function loadTrackFromUrl(url: string) {
-  const res = await fetch(url);
-  const text = await res.text();
+  const text = await fetchDataText(url);
   const kind: TrackKind = url.match(/\.geojson$/i) ? 'geojson' : 'gpx';
   return {
     source: { kind, text } as TrackSource,
@@ -282,14 +317,14 @@ export function App() {
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (playing && v.paused) v.play().catch(() => {});
-    if (!playing && !v.paused) v.pause();
-  }, [playing, videoUrl]);
+    if (playing && rate >= 0 && v.paused) v.play().catch(() => {});
+    if ((!playing || rate < 0) && !v.paused) v.pause();
+  }, [playing, rate, videoUrl]);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    v.playbackRate = rate;
+    v.playbackRate = rate > 0 ? rate : 1;
   }, [rate, videoUrl]);
 
   useEffect(() => {
@@ -303,12 +338,14 @@ export function App() {
       const ctAbsFromVideo = vt + s.videoOffset;
       const ct = s.currentTime;
       const [, end] = effectiveRange(s);
-      if (Math.abs(ctAbsFromVideo - ct) > 0.3) {
+      const storeDrivesVideo = !s.playing || s.rate < 0;
+      const seekTolerance = storeDrivesVideo ? Math.max(0.001, 0.5 / s.projectFps) : 0.3;
+      if (Math.abs(ctAbsFromVideo - ct) > seekTolerance) {
         // Big jump — store moved (user seek/selection change). Push to video,
         // clamped within the video's own range.
         const targetVt = Math.max(0, Math.min(s.videoDuration, ct - s.videoOffset));
         v.currentTime = targetVt;
-      } else if (s.playing && Math.abs(ctAbsFromVideo - ct) > 0.005) {
+      } else if (s.playing && s.rate >= 0 && Math.abs(ctAbsFromVideo - ct) > 0.005) {
         // Normal playback — video drives store.
         const next = ctAbsFromVideo;
         if (next >= end) {
@@ -331,6 +368,10 @@ export function App() {
       try {
         if (name.endsWith('.mp4') || name.endsWith('.mov') || name.endsWith('.webm') || name.endsWith('.m4v')) {
           await loadVideoFile(file);
+          continue;
+        }
+        if (isProjectFilename(name)) {
+          await loadProject(file);
           continue;
         }
         const text = await file.text();
@@ -458,6 +499,159 @@ export function App() {
     }
   };
 
+  const saveProject = () => {
+    setError(null);
+    const s = usePlayback.getState();
+    if (!s.telemetry && !trackSource) {
+      setError('当前没有可保存的工程内容');
+      return;
+    }
+    const project = buildProject(s, trackSource);
+    downloadProject(project, projectFilename(s.profile.name, new Date()));
+  };
+
+  const applyProject = (p: Hud5Project) => {
+    const store = usePlayback.getState();
+    // 1. Settings first, so the track re-parse (snap/projection) uses them.
+    (Object.keys(DEFAULT_SETTINGS) as (keyof HudSettings)[]).forEach(key => {
+      if (p.settings && key in p.settings) {
+        store.setSetting(key, p.settings[key] as HudSettings[typeof key]);
+      }
+    });
+    store.setProfile({ name: p.profileName });
+    store.setUnit(p.unit);
+    store.setProjectFps(p.projectFps);
+    store.setPreviewAspect(p.previewAspect);
+
+    // 2. Embedded data. setTelemetry resets telemetry timeline; track is
+    //    restored without a timeline reset (ref pre-set below), so the offsets
+    //    applied in step 3 survive the async re-parse effect.
+    store.setTelemetry(p.telemetry);
+    setTelemetryUrl('');
+    if (p.trackSource) {
+      const src: TrackSource = {
+        kind: p.trackSource.kind,
+        text: p.trackSource.text,
+        normalizedWgs84: p.trackSource.normalizedWgs84,
+      };
+      parsedTrackSourceRef.current = src; // mark as "not new" → no timeline reset
+      setGpxSource(src.kind === 'gpx' ? { name: 'track.gpx', text: src.text } : null);
+      setTrackSource(src);
+      setTrackUrl('');
+    } else {
+      parsedTrackSourceRef.current = null;
+      setGpxSource(null);
+      setTrackSource(null);
+      setTrackUrl('');
+      store.setTrack(null);
+    }
+
+    // 3. Timeline / alignment state, applied after data is loaded.
+    store.setTelemetryOffset(p.telemetryOffset);
+    store.setTrackOffset(p.trackOffset);
+    store.setVideoOffset(p.videoOffset);
+    store.setSourceTrim('telemetry', p.telemetryTrimStart, p.telemetryTrimEnd);
+    store.setSourceTrim('track', p.trackTrimStart, p.trackTrimEnd);
+    store.setSourceTrim('video', p.videoTrimStart, p.videoTrimEnd);
+    store.setSelection(p.playbackStart, p.playbackEnd);
+    store.setProgressStart(p.progressStart);
+    store.setProgressEnd(p.progressEnd);
+    store.setProgressStartPct(p.progressStartPct);
+    store.setProgressEndPct(p.progressEndPct);
+    store.setElapsedStart(p.elapsedStart);
+  };
+
+  const loadProject = async (file: File) => {
+    setError(null);
+    try {
+      const text = await file.text();
+      applyProject(parseProjectText(text));
+    } catch (e) {
+      setError(`加载工程失败：${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+
+  const applyExportCommand = async (cmd: string) => {
+    setError(null);
+    let p;
+    try {
+      p = parseExportCommand(cmd);
+    } catch (e) {
+      setError(`导入命令失败：${e instanceof Error ? e.message : String(e)}`);
+      return;
+    }
+    const store = usePlayback.getState();
+    // 1. Settings.
+    if (p.player !== undefined) store.setProfile({ name: p.player });
+    if (p.unit) store.setUnit(p.unit);
+    if (p.coord) store.setSetting('trackCoordinateSystem', p.coord);
+    if (p.fps !== undefined) store.setProjectFps(p.fps);
+    if (p.width && p.height && p.width > 0 && p.height > 0) {
+      store.setPreviewAspect(p.width / p.height);
+    }
+    if (p.snapToRoads !== undefined) store.setSetting('snapToRoads', p.snapToRoads);
+    if (p.snapMaxDistM !== undefined) store.setSetting('snapMaxDistM', p.snapMaxDistM);
+    if (p.minimapViewRadiusM !== undefined) store.setSetting('minimapViewRadiusM', p.minimapViewRadiusM);
+    if (p.minimapTiltDeg !== undefined) store.setSetting('minimapTiltDeg', p.minimapTiltDeg);
+    if (p.minimapStrokeWidth !== undefined) store.setSetting('minimapStrokeWidth', p.minimapStrokeWidth);
+    if (p.hudShakeEnabled !== undefined) store.setSetting('hudShakeEnabled', p.hudShakeEnabled);
+    if (p.hudShakeIntensity !== undefined) store.setSetting('hudShakeIntensity', p.hudShakeIntensity);
+    if (p.hudCurvatureEnabled !== undefined) store.setSetting('hudCurvatureEnabled', p.hudCurvatureEnabled);
+    if (p.hudCurvatureIntensity !== undefined) store.setSetting('hudCurvatureIntensity', p.hudCurvatureIntensity);
+
+    // 2. Data referenced by path. Commands usually carry absolute filesystem
+    //    paths the browser can't read; only files under /output or /samples are
+    //    reachable. Each source loads independently — a failure leaves existing
+    //    data intact and is reported, while settings still apply.
+    const dataErrors: string[] = [];
+    if (p.telemetryUrl) {
+      const url = toBrowserDataUrl(p.telemetryUrl);
+      if (!url) {
+        dataErrors.push(`遥测路径无法在浏览器加载（${p.telemetryUrl}），请手动拖入文件`);
+      } else {
+        try {
+          store.setTelemetry(await loadTelemetryFromUrl(url));
+          setTelemetryUrl(url);
+        } catch (e) {
+          dataErrors.push(`遥测：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+    if (p.trackUrl) {
+      const url = toBrowserDataUrl(p.trackUrl);
+      if (!url) {
+        dataErrors.push(`轨迹路径无法在浏览器加载（${p.trackUrl}），请手动拖入文件`);
+      } else {
+        try {
+          const loaded = await loadTrackFromUrl(url);
+          parsedTrackSourceRef.current = loaded.source; // avoid timeline reset
+          setGpxSource(loaded.gpxSource);
+          setTrackSource(loaded.source);
+          setTrackUrl(url);
+        } catch (e) {
+          dataErrors.push(`轨迹：${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+    }
+
+    // 3. Timeline / alignment, applied after data so it isn't reset.
+    if (p.telemetryOffset !== undefined) store.setTelemetryOffset(p.telemetryOffset);
+    if (p.trackOffset !== undefined) store.setTrackOffset(p.trackOffset);
+    if (p.videoOffset !== undefined) store.setVideoOffset(p.videoOffset);
+    if (p.rangeStartSec !== undefined && p.rangeEndSec !== undefined) {
+      store.setSelection(p.rangeStartSec, p.rangeEndSec);
+    }
+    if (p.progressStart !== undefined) store.setProgressStart(p.progressStart);
+    if (p.progressEnd !== undefined) store.setProgressEnd(p.progressEnd);
+    if (p.progressStartPct !== undefined) store.setProgressStartPct(p.progressStartPct);
+    if (p.progressEndPct !== undefined) store.setProgressEndPct(p.progressEndPct);
+    if (p.elapsedStart !== undefined) store.setElapsedStart(p.elapsedStart);
+
+    if (dataErrors.length) {
+      setError(`设置已恢复；数据未加载 → ${dataErrors.join('；')}`);
+    }
+  };
+
   return (
     <div style={{ width: '100vw', height: '100vh', overflow: 'hidden', position: 'relative' }}>
       {/* Stage: 16:9 canvas */}
@@ -555,6 +749,9 @@ export function App() {
             videoHeight={videoHeight}
             telemetryUrl={telemetryUrl}
             trackUrl={trackUrl}
+            onSaveProject={saveProject}
+            onLoadProjectFile={loadProject}
+            onImportCommand={applyExportCommand}
           />
           <Timeline />
           {error && (
@@ -588,6 +785,9 @@ function Toolbar({
   videoHeight,
   telemetryUrl,
   trackUrl,
+  onSaveProject,
+  onLoadProjectFile,
+  onImportCommand,
 }: {
   unit: SpeedUnit;
   canEnrichTrack: boolean;
@@ -597,11 +797,15 @@ function Toolbar({
   videoHeight: number;
   telemetryUrl: string | null;
   trackUrl: string | null;
+  onSaveProject: () => void;
+  onLoadProjectFile: (file: File) => void;
+  onImportCommand: (cmd: string) => void;
 }) {
   const profile = usePlayback(s => s.profile);
   const editMode = usePlayback(s => s.editMode);
   const [exportOpen, setExportOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const projectFileRef = useRef<HTMLInputElement>(null);
   return (
     <div
       style={{
@@ -733,10 +937,55 @@ function Toolbar({
             defaultHeight={videoHeight > 0 ? videoHeight : 1080}
             defaultTelemetryUrl={telemetryUrl ?? ''}
             defaultTrackUrl={trackUrl ?? ''}
+            onImportCommand={onImportCommand}
             onClose={() => setExportOpen(false)}
           />
         )}
       </div>
+      <button
+        onClick={onSaveProject}
+        title="把当前数据与所有设置保存为工程文件"
+        style={{
+          padding: '4px 10px',
+          background: '#333',
+          color: '#fff',
+          border: '1px solid #555',
+          borderRadius: 3,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: 13,
+        }}
+      >
+        保存工程
+      </button>
+      <button
+        onClick={() => projectFileRef.current?.click()}
+        title="从工程文件恢复数据与设置"
+        style={{
+          padding: '4px 10px',
+          background: '#333',
+          color: '#fff',
+          border: '1px solid #555',
+          borderRadius: 3,
+          cursor: 'pointer',
+          fontFamily: 'inherit',
+          fontSize: 13,
+        }}
+      >
+        加载工程
+      </button>
+      <input
+        ref={projectFileRef}
+        type="file"
+        accept=".json,.hud5proj"
+        aria-label="加载工程文件"
+        style={{ display: 'none' }}
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) onLoadProjectFile(file);
+          e.target.value = '';
+        }}
+      />
       <span style={{ marginLeft: 'auto', color: '#888' }}>
         {editMode ? '拖动 HUD 元素到想要的位置' : '拖入 CSV/JSON/GPX/GeoJSON 文件以加载'}
       </span>
@@ -901,6 +1150,7 @@ function ExportSettingsPanel({
   defaultHeight,
   defaultTelemetryUrl,
   defaultTrackUrl,
+  onImportCommand,
   onClose,
 }: {
   unit: SpeedUnit;
@@ -909,6 +1159,7 @@ function ExportSettingsPanel({
   defaultHeight: number;
   defaultTelemetryUrl: string;
   defaultTrackUrl: string;
+  onImportCommand: (cmd: string) => void;
   onClose: () => void;
 }) {
   const [width, setWidth] = useState(() => loadStoredExport()?.width ?? defaultWidth);
@@ -964,6 +1215,7 @@ function ExportSettingsPanel({
   }, [defaultTrackUrl]);
   const [outPath, setOutPath] = useState('out/hud.webm');
   const [copied, setCopied] = useState(false);
+  const [importText, setImportText] = useState('');
   const missingTelemetryExportUrl = telemetryUrl.trim() === '';
   const missingTrackExportUrl = trackUrl.trim() === '';
   const missingAllExportUrls = missingTelemetryExportUrl && missingTrackExportUrl;
@@ -1257,6 +1509,43 @@ function ExportSettingsPanel({
       </div>
       <div style={{ fontSize: 11, color: '#777' }}>
         先运行 <code>npm run build && npm run preview</code>，再在另一个终端粘贴运行上面的命令。
+      </div>
+
+      <label style={labelStyle}>
+        导入命令（恢复设置）
+        <textarea
+          value={importText}
+          onChange={e => setImportText(e.target.value)}
+          rows={3}
+          placeholder="粘贴一条导出命令以恢复其中的设置；数据需在固定 URL 时才能一并加载"
+          style={{
+            ...inputStyle,
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            resize: 'vertical',
+          }}
+        />
+      </label>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button
+          onClick={() => {
+            const cmd = importText.trim();
+            if (cmd) onImportCommand(cmd);
+          }}
+          disabled={importText.trim() === ''}
+          style={{
+            padding: '4px 12px',
+            background: '#333',
+            color: '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: importText.trim() === '' ? 'default' : 'pointer',
+            opacity: importText.trim() === '' ? 0.5 : 1,
+            fontFamily: 'inherit',
+            fontSize: 13,
+          }}
+        >
+          导入命令
+        </button>
       </div>
     </div>
   );

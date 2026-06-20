@@ -377,7 +377,11 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
     const s = get();
     const [start, end] = effectiveRangeFromState(s);
     if (end <= start) return;
-    if (s.currentTime >= end - 1e-6) set({ currentTime: start });
+    if (s.rate < 0) {
+      if (s.currentTime <= start + 1e-6) set({ currentTime: end });
+    } else if (s.currentTime >= end - 1e-6) {
+      set({ currentTime: start });
+    }
     set({ playing: true });
   },
   pause: () => set({ playing: false }),
@@ -634,12 +638,14 @@ export function startPlaybackLoop(): () => void {
     const [start, end] = effectiveRangeFromState(s);
     // When a video is loaded, the <video> element is the time source —
     // App.tsx pushes video.currentTime into the store each rAF tick.
-    if (s.playing && end > start && !s.videoUrl) {
+    if (s.playing && end > start && (!s.videoUrl || s.rate < 0)) {
       if (last) {
         const dt = ((ts - last) / 1000) * s.rate;
         const next = s.currentTime + dt;
-        if (next >= end) {
+        if (s.rate >= 0 && next >= end) {
           usePlayback.setState({ currentTime: end, playing: false });
+        } else if (s.rate < 0 && next <= start) {
+          usePlayback.setState({ currentTime: start, playing: false });
         } else {
           usePlayback.setState({ currentTime: next });
         }

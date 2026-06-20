@@ -18,6 +18,8 @@ const LANE_META: Record<SourceKey, { label: string; color: string }> = {
 const HANDLE_HIT_PX = 8;
 const EDGE_HIT_PX = 6;
 const MIN_TRIM_WIDTH = EDGE_HIT_PX * 2 + 4; // lane too narrow for trim edges
+const MIN_VIEW_FRAMES = 8;
+const SHUTTLE_RATES = [1, 2, 4, 8];
 
 interface DragState {
   kind: 'offset' | 'trim-left' | 'trim-right' | 'selection-move' | 'selection-resize-l' | 'selection-resize-r' | 'selection-new' | 'seek';
@@ -47,6 +49,24 @@ function pickHandleHit(
   if (Math.abs(px - xR) <= HANDLE_HIT_PX) return 'r';
   if (px > xL && px < xR) return 'body';
   return null;
+}
+
+function clampN(n: number, lo: number, hi: number): number {
+  if (hi < lo) return lo;
+  return Math.max(lo, Math.min(hi, n));
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName;
+  return target.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+}
+
+function nextShuttleRate(rate: number, playing: boolean, direction: 1 | -1): number {
+  if (!playing || Math.sign(rate) !== direction) return direction;
+  const abs = Math.abs(rate);
+  const next = SHUTTLE_RATES.find(r => r > abs + 1e-6) ?? SHUTTLE_RATES[SHUTTLE_RATES.length - 1];
+  return next * direction;
 }
 
 export function Timeline() {
@@ -84,6 +104,7 @@ export function Timeline() {
   const [selectedLane, setSelectedLane] = useState<SourceKey | null>(null);
   const [edgeHover, setEdgeHover] = useState<{ lane: SourceKey; side: 'left' | 'right' } | null>(null);
   const [elapsedStartText, setElapsedStartText] = useState(() => formatClock(elapsedStart));
+  const [viewRange, setViewRange] = useState<Range | null>(null);
 
   useEffect(() => {
     if (!trackRef.current) return;
@@ -95,16 +116,22 @@ export function Timeline() {
     return () => ro.disconnect();
   }, []);
 
+  const hasAnyData = axisEnd > axisStart;
   const span = Math.max(axisEnd - axisStart, 0.001);
   // Keep a margin so a lane that was dragged outside still has room.
-  const viewSpan = span * 1.05;
-  const viewStart = axisStart - span * 0.025;
+  const fullViewSpan = span * 1.05;
+  const fullViewStart = axisStart - span * 0.025;
+  const fullViewEnd = fullViewStart + fullViewSpan;
+  const minViewSpan = Math.max(MIN_VIEW_FRAMES / fps, 0.05);
+  const [activeViewStart, activeViewEnd] = viewRange ?? [fullViewStart, fullViewEnd];
+  const viewStart = activeViewStart;
+  const viewSpan = Math.max(activeViewEnd - activeViewStart, 0.001);
   const pxPerSec = width > 0 && viewSpan > 0 ? width / viewSpan : 0;
   const tToX = (t: number) => (t - viewStart) * pxPerSec;
   const xToT = (x: number) => viewStart + x / pxPerSec;
 
-  const hasAnyData = axisEnd > axisStart;
   const hasSelection = playbackStart !== null && playbackEnd !== null;
+  const isZoomed = viewRange !== null;
 
   const lanes = (Object.entries(ranges) as [SourceKey, Range | null][])
     .filter(([, r]) => r !== null) as [SourceKey, Range][];
@@ -135,6 +162,26 @@ export function Timeline() {
 
   const setTrim = (k: SourceKey, start: number, end: number) => {
     usePlayback.getState().setSourceTrim(k, start, end);
+  };
+
+  const resetView = () => setViewRange(null);
+
+  const revealTime = (t: number) => {
+    setViewRange(prev => {
+      if (!prev) return prev;
+      const curSpan = prev[1] - prev[0];
+      if (t >= prev[0] && t <= prev[1]) return prev;
+      const nextStart = clampN(t - curSpan * 0.5, fullViewStart, fullViewEnd - curSpan);
+      return [nextStart, nextStart + curSpan];
+    });
+  };
+
+  const stepFrames = (frames: number) => {
+    const st = usePlayback.getState();
+    st.pause();
+    const target = st.currentTime + frames / st.projectFps;
+    st.seek(target);
+    revealTime(usePlayback.getState().currentTime);
   };
 
   const sourceDuration = (k: SourceKey, ranges: Record<SourceKey, [number, number] | null>): number => {
@@ -259,6 +306,41 @@ export function Timeline() {
     }
   };
 
+  const onTrackWheel = (e: React.WheelEvent) => {
+    if (!hasAnyData || !pxPerSec || width <= 0) return;
+    e.preventDefault();
+    const rect = trackRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const focalX = clampN(e.clientX - rect.left, 0, width);
+    const focalT = xToT(focalX);
+    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+
+    const nextSpan = clampN(viewSpan * Math.exp(delta * 0.0015), minViewSpan, fullViewSpan);
+    if (nextSpan >= fullViewSpan * 0.999) {
+      resetView();
+      return;
+    }
+    const focalRatio = clampN((focalT - viewStart) / viewSpan, 0, 1);
+    const nextStart = clampN(focalT - focalRatio * nextSpan, fullViewStart, fullViewEnd - nextSpan);
+    setViewRange([nextStart, nextStart + nextSpan]);
+  };
+
+  useEffect(() => {
+    if (!hasAnyData) {
+      setViewRange(null);
+      return;
+    }
+    setViewRange(prev => {
+      if (!prev) return prev;
+      const curSpan = prev[1] - prev[0];
+      if (!Number.isFinite(curSpan) || curSpan <= 0 || curSpan >= fullViewSpan * 0.999) return null;
+      const nextSpan = clampN(curSpan, minViewSpan, fullViewSpan);
+      const nextStart = clampN(prev[0], fullViewStart, fullViewEnd - nextSpan);
+      return [nextStart, nextStart + nextSpan];
+    });
+  }, [hasAnyData, fullViewStart, fullViewEnd, fullViewSpan, minViewSpan]);
+
   useEffect(() => {
     if (!drag) return;
     const onMove = (e: PointerEvent) => {
@@ -338,8 +420,7 @@ export function Timeline() {
   // Delete selected lane on Backspace / Delete
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (isEditableTarget(e.target)) return;
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedLane) {
         e.preventDefault();
         deleteLane(selectedLane);
@@ -348,6 +429,79 @@ export function Timeline() {
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
   }, [selectedLane]);
+
+  // NLE-style transport shortcuts: Space, J/K/L, frame stepping, range edges.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (isEditableTarget(e.target)) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const st = usePlayback.getState();
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        if (st.playing) st.pause();
+        else {
+          st.setRate(1);
+          st.play();
+        }
+        return;
+      }
+      if (!hasAnyData) return;
+
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault();
+        stepFrames(e.shiftKey ? -10 : -1);
+        return;
+      }
+      if (e.key === 'ArrowRight') {
+        e.preventDefault();
+        stepFrames(e.shiftKey ? 10 : 1);
+        return;
+      }
+      if (e.key === 'j' || e.key === 'J') {
+        e.preventDefault();
+        st.setRate(nextShuttleRate(st.rate, st.playing, -1));
+        st.play();
+        return;
+      }
+      if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault();
+        st.pause();
+        return;
+      }
+      if (e.key === 'l' || e.key === 'L') {
+        e.preventDefault();
+        st.setRate(nextShuttleRate(st.rate, st.playing, 1));
+        st.play();
+        return;
+      }
+      if (e.key === 'Home') {
+        e.preventDefault();
+        const [start] = effectiveRange(usePlayback.getState());
+        st.pause();
+        st.seek(start);
+        revealTime(usePlayback.getState().currentTime);
+        return;
+      }
+      if (e.key === 'End') {
+        e.preventDefault();
+        const [, end] = effectiveRange(usePlayback.getState());
+        st.pause();
+        st.seek(end);
+        revealTime(usePlayback.getState().currentTime);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [hasAnyData, fullViewStart, fullViewEnd]);
+
+  useEffect(() => {
+    if (!playing || !viewRange) return;
+    const guard = viewSpan * 0.08;
+    if (currentTime < viewRange[0] + guard || currentTime > viewRange[1] - guard) {
+      revealTime(currentTime);
+    }
+  }, [currentTime, playing, viewRange, viewSpan]);
 
   // Tick marks -------------------------------------------------------------
   const ticks = useMemo(() => {
@@ -398,7 +552,14 @@ export function Timeline() {
       {/* Controls row */}
       <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
         <button
-          onClick={() => usePlayback.getState().toggle()}
+          onClick={() => {
+            const st = usePlayback.getState();
+            if (st.playing) st.pause();
+            else {
+              if (st.rate < 0) st.setRate(1);
+              st.play();
+            }
+          }}
           disabled={!hasAnyData}
           style={{
             width: 32,
@@ -409,7 +570,7 @@ export function Timeline() {
             cursor: hasAnyData ? 'pointer' : 'default',
           }}
         >
-          {playing ? '❚❚' : '▶'}
+          {playing ? (rate < 0 ? '◀' : '❚❚') : '▶'}
         </button>
         <span
           style={{
@@ -441,11 +602,29 @@ export function Timeline() {
             onChange={e => usePlayback.getState().setRate(Number(e.target.value))}
             style={{ marginLeft: 6 }}
           >
-            {[0.25, 0.5, 1, 2, 4].map(r => (
-              <option key={r} value={r}>{r}×</option>
+            {[-8, -4, -2, -1, 0.25, 0.5, 1, 2, 4, 8].map(r => (
+              <option key={r} value={r}>{r < 0 ? `◀ ${Math.abs(r)}×` : `${r}×`}</option>
             ))}
           </select>
         </label>
+        <button
+          onClick={resetView}
+          disabled={!isZoomed}
+          style={{
+            padding: '4px 10px',
+            background: '#333',
+            color: '#fff',
+            border: '1px solid #555',
+            borderRadius: 3,
+            cursor: isZoomed ? 'pointer' : 'default',
+            opacity: isZoomed ? 1 : 0.55,
+            fontFamily: 'inherit',
+            fontSize: 12,
+          }}
+          title="将时间线缩放恢复到完整范围"
+        >
+          适合
+        </button>
         <button
           onClick={() => {
             const st = usePlayback.getState();
@@ -678,6 +857,7 @@ export function Timeline() {
       <div
         ref={trackRef}
         onPointerDown={onTrackPointerDown}
+        onWheel={onTrackWheel}
         style={{
           position: 'relative',
           width: '100%',
