@@ -121,6 +121,37 @@ final class RouteLabModel {
             lon: a.lon + (b.lon - a.lon) * fraction
         )
     }
+    var routeCursorSpeedKmh: Double? {
+        guard routeTimelineRange?.contains(cursorSeconds) == true,
+              route.samples.count == routeSampleSeconds.count,
+              route.samples.count >= 2 else { return nil }
+
+        let upperIndex: Int
+        if cursorSeconds <= routeSampleSeconds[0] {
+            upperIndex = 1
+        } else if cursorSeconds >= routeSampleSeconds[routeSampleSeconds.count - 1] {
+            upperIndex = routeSampleSeconds.count - 1
+        } else {
+            var low = 1
+            var high = routeSampleSeconds.count - 1
+            while low < high {
+                let middle = (low + high) / 2
+                if routeSampleSeconds[middle] < cursorSeconds {
+                    low = middle + 1
+                } else {
+                    high = middle
+                }
+            }
+            upperIndex = low
+        }
+
+        let lowerIndex = max(0, upperIndex - 1)
+        let dt = routeSampleSeconds[upperIndex] - routeSampleSeconds[lowerIndex]
+        guard dt > 0 else { return nil }
+        let distance = RouteEngine.distanceM(route.samples[lowerIndex].point, route.samples[upperIndex].point)
+        let kmh = distance / dt * 3.6
+        return kmh.isFinite ? kmh : nil
+    }
     var orderedMarks: [RouteMark] { marks.sorted { $0.time < $1.time } }
     var hasDuplicateTimes: Bool {
         zip(orderedMarks, orderedMarks.dropFirst()).contains { $0.time >= $1.time }

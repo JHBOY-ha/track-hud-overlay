@@ -37,6 +37,8 @@ struct TimelinePanel: View {
 
                 transportControls
 
+                routeSpeedPreview
+
                 Spacer()
 
                 VStack(alignment: .trailing, spacing: 1) {
@@ -112,6 +114,32 @@ struct TimelinePanel: View {
                 .background(.quaternary, in: Capsule())
                 .accessibilityLabel("播放速度 \(playbackStatus)")
         }
+    }
+
+    @ViewBuilder
+    private var routeSpeedPreview: some View {
+        if model.route.samples.count > 1 {
+            HStack(spacing: 5) {
+                Image(systemName: "speedometer")
+                    .imageScale(.small)
+                Text(routeSpeedLabel)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+            }
+            .foregroundStyle(model.routeCursorSpeedKmh == nil ? .secondary : .primary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(.quaternary, in: Capsule())
+            .help("当前播放头位置的路线预览时速")
+            .accessibilityLabel("路线时速 \(routeSpeedLabel)")
+        }
+    }
+
+    private var routeSpeedLabel: String {
+        guard let speed = model.routeCursorSpeedKmh else { return "-- km/h" }
+        if speed >= 100 {
+            return "\(speed.formatted(.number.precision(.fractionLength(0)))) km/h"
+        }
+        return "\(speed.formatted(.number.precision(.fractionLength(1)))) km/h"
     }
 
     private var playbackStatus: String {
